@@ -129,7 +129,10 @@ function buildLoop() {
 
     const activeNotes = NOTES.filter(n => grid[n][step]);
     if (activeNotes.length > 0) {
-      synth.triggerAttackRelease(activeNotes, '16n', time);
+      // Equal-power polyphony compensation: 1/√n velocity per voice so
+      // combined amplitude stays constant regardless of chord size.
+      const velocity = 1 / Math.sqrt(activeNotes.length);
+      synth.triggerAttackRelease(activeNotes, '16n', time, velocity);
     }
     scheduleVisual(() => {
       highlightPlayhead(step);
@@ -145,19 +148,23 @@ function initSynth() {
     envelope: { attack: 0.01, decay: 0.1, sustain: 0.5, release: 0.4 },
   });
 
-  // Signal chain: synth → filter → limiter → destination (dry)
-  //                             → reverbSend → reverb → limiter (wet)
-  filter     = new Tone.Filter({ frequency: freqFromSlider(75), type: 'lowpass', Q: 1 });
+  // Signal chain: synth → filter → softLimit → destination (dry)
+  //                            → reverbSend → reverb → softLimit (wet)
+  //
+  // softLimit is a high-ratio soft-knee compressor. It tames resonance peaks
+  // and polyphony buildups by reacting to actual signal level rather than slider
+  // position, so the filter sweeps and resonance feel completely natural.
+  filter    = new Tone.Filter({ frequency: freqFromSlider(75), type: 'lowpass', Q: 1 });
   reverbSend = new Tone.Gain(0);
   reverb     = new Tone.Reverb({ decay: 2, wet: 1 }); // IR auto-generated on construction
-  const limiter = new Tone.Limiter(-3);
+  const softLimit = new Tone.Compressor({ threshold: -6, ratio: 20, attack: 0.001, release: 0.1, knee: 10 });
 
   synth.connect(filter);
-  filter.connect(limiter);
+  filter.connect(softLimit);
   filter.connect(reverbSend);
   reverbSend.connect(reverb);
-  reverb.connect(limiter);
-  limiter.toDestination();
+  reverb.connect(softLimit);
+  softLimit.toDestination();
 
   buildLoop();
 }
