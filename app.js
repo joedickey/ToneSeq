@@ -35,9 +35,10 @@ let isPlaying = false;
 
 let prevPlayingNodes = [];
 
-let playbackMode   = 'forward';  // 'forward' | 'reverse' | 'pingpong'
-let activeStepArray = [];
-let seqPosition    = 0;
+let playbackMode        = 'forward';  // 'forward' | 'reverse' | 'pingpong'
+let pendingPlaybackMode = null;       // applied at next loop boundary
+let activeStepArray     = [];
+let seqPosition         = 0;
 
 // ═══════════════════════════════════════════════════════════
 // A. PIANO ROLL
@@ -103,30 +104,38 @@ function getStepArray(mode) {
   return fwd;
 }
 
-/** (Re)build the Tone.Sequence for the current playbackMode. */
+/**
+ * Build the repeating 16th-note clock using scheduleRepeat so that
+ * activeStepArray can be swapped at loop boundaries without stopping
+ * the transport (no timing jolt on mode changes).
+ */
 function buildLoop() {
-  if (loop) { loop.stop(); loop.dispose(); }
+  if (loop !== null) { Tone.Transport.clear(loop); loop = null; }
   activeStepArray = getStepArray(playbackMode);
   seqPosition = 0;
 
-  loop = new Tone.Sequence(
-    (time, step) => {
-      seqPosition = (seqPosition + 1) % activeStepArray.length;
-      const nextGridStep = activeStepArray[seqPosition];
+  loop = Tone.Transport.scheduleRepeat((time) => {
+    // At the start of each new pass, apply any queued mode change
+    if (seqPosition === 0 && pendingPlaybackMode !== null) {
+      playbackMode = pendingPlaybackMode;
+      pendingPlaybackMode = null;
+      activeStepArray = getStepArray(playbackMode);
+    }
 
-      const activeNotes = NOTES.filter(n => grid[n][step]);
-      if (activeNotes.length > 0) {
-        synth.triggerAttackRelease(activeNotes, '16n', time);
-      }
-      scheduleVisual(() => {
-        highlightPlayhead(step);
-        updateGraphPlayhead(step, nextGridStep);
-      }, time);
-    },
-    activeStepArray,
-    '16n',
-  );
-  loop.start(0);
+    const step = activeStepArray[seqPosition];
+    const nextPos = (seqPosition + 1) % activeStepArray.length;
+    const nextGridStep = activeStepArray[nextPos];
+    seqPosition = nextPos;
+
+    const activeNotes = NOTES.filter(n => grid[n][step]);
+    if (activeNotes.length > 0) {
+      synth.triggerAttackRelease(activeNotes, '16n', time);
+    }
+    scheduleVisual(() => {
+      highlightPlayhead(step);
+      updateGraphPlayhead(step, nextGridStep);
+    }, time);
+  }, '16n');
 }
 
 function initSynth() {
@@ -153,13 +162,14 @@ function initSynth() {
   buildLoop();
 }
 
-/** Switch playback mode, rebuilding the loop (restarts transport if playing). */
+/** Switch playback mode. If playing, queues the change for the next loop boundary. */
 function setPlaybackMode(mode) {
-  playbackMode = mode;
-  const wasPlaying = isPlaying;
-  if (wasPlaying) { Tone.Transport.stop(); isPlaying = false; }
-  buildLoop();
-  if (wasPlaying) { Tone.Transport.start(); isPlaying = true; }
+  if (isPlaying) {
+    pendingPlaybackMode = mode;
+  } else {
+    playbackMode = mode;
+    buildLoop();
+  }
 }
 
 function scheduleVisual(cb, time) {
@@ -182,6 +192,12 @@ function stop() {
   Tone.Transport.stop();
   isPlaying = false;
   seqPosition = 0;
+  // Flush any pending mode change so next play starts in the selected mode
+  if (pendingPlaybackMode !== null) {
+    playbackMode = pendingPlaybackMode;
+    pendingPlaybackMode = null;
+    buildLoop();
+  }
   document.querySelectorAll('.step-cell.playhead').forEach(el => el.classList.remove('playhead'));
   prevPlayingNodes.forEach(n => n.removeClass('playing'));
   prevPlayingNodes = [];
