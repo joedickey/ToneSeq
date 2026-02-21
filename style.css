@@ -213,6 +213,62 @@ h1 {
   min-width: 36px;
 }
 
+/* Effects (Filter + Reverb) */
+
+.fx-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.fx-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fx-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #556;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.fx-sep {
+  width: 1px;
+  height: 18px;
+  background: #2a2a4a;
+}
+
+.fx-type {
+  display: flex;
+  gap: 4px;
+}
+
+.filter-type-btn {
+  padding: 4px 9px;
+  background: #1c1c38;
+  color: #777;
+  border: 1px solid #3a3a5a;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-family: inherit;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+
+.filter-type-btn:hover {
+  border-color: #00d4aa88;
+  color: #aaa;
+}
+
+.filter-type-btn.selected {
+  background: #00d4aa1a;
+  border-color: #00d4aa;
+  color: #00d4aa;
+}
+
 /* Clear All */
 
 #clear-btn {

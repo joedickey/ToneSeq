@@ -25,7 +25,10 @@ let chordGroups = new Map();
 // stepSequence: [{ step, notes, anchor }, ...] in step order — drives sequence edges
 let stepSequence = [];
 
-let synth = null;
+let synth      = null;
+let filter     = null;
+let reverbSend = null;
+let reverb     = null;
 let loop = null;
 let cy = null;
 let isPlaying = false;
@@ -84,12 +87,27 @@ function highlightPlayhead(step) {
 // B. SEQUENCER (Tone.js)
 // ═══════════════════════════════════════════════════════════
 
+/** Logarithmic slider (0–100) → frequency in Hz (20 Hz – 20 kHz). */
+function freqFromSlider(v) { return Math.round(20 * Math.pow(1000, v / 100)); }
+function formatFreq(hz)    { return hz >= 1000 ? (hz / 1000).toFixed(1) + 'kHz' : hz + 'Hz'; }
+
 function initSynth() {
   synth = new Tone.PolySynth(Tone.Synth, {
     oscillator: { type: 'sine' },
     envelope: { attack: 0.01, decay: 0.1, sustain: 0.5, release: 0.4 },
   });
-  synth.toDestination();
+
+  // Signal chain: synth → filter → destination (dry)
+  //                             → reverbSend → reverb → destination (wet)
+  filter     = new Tone.Filter({ frequency: freqFromSlider(75), type: 'lowpass', Q: 1 });
+  reverbSend = new Tone.Gain(0);
+  reverb     = new Tone.Reverb({ decay: 2, wet: 1 }); // IR auto-generated on construction
+
+  synth.connect(filter);
+  filter.toDestination();
+  filter.connect(reverbSend);
+  reverbSend.connect(reverb);
+  reverb.toDestination();
 
   loop = new Tone.Sequence(
     (time, step) => {
@@ -491,6 +509,44 @@ document.addEventListener('DOMContentLoaded', () => {
       btn.classList.add('selected');
       setWaveform(btn.dataset.wave);
     });
+  });
+
+  // Filter controls
+  document.getElementById('flt-freq').addEventListener('input', e => {
+    const freq = freqFromSlider(parseFloat(e.target.value));
+    filter.frequency.value = freq;
+    document.getElementById('flt-freq-val').textContent = formatFreq(freq);
+  });
+
+  document.getElementById('flt-q').addEventListener('input', e => {
+    const val = parseFloat(e.target.value);
+    filter.Q.value = val;
+    document.getElementById('flt-q-val').textContent = val.toFixed(1);
+  });
+
+  document.querySelectorAll('.filter-type-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-type-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      filter.type = btn.dataset.type;
+    });
+  });
+
+  // Reverb controls
+  document.getElementById('rvb-send').addEventListener('input', e => {
+    const val = parseFloat(e.target.value);
+    reverbSend.gain.value = val;
+    document.getElementById('rvb-send-val').textContent = val.toFixed(2);
+  });
+
+  let reverbDecayTimer = null;
+  document.getElementById('rvb-decay').addEventListener('input', e => {
+    const val = parseFloat(e.target.value);
+    document.getElementById('rvb-decay-val').textContent = val.toFixed(1) + 's';
+    reverb.decay = val;
+    // Regenerate the convolution IR shortly after the user stops dragging
+    clearTimeout(reverbDecayTimer);
+    reverbDecayTimer = setTimeout(() => reverb.generate(), 400);
   });
 
   // ADSR sliders
