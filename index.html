@@ -25,8 +25,11 @@
           <button id="play-btn">&#9654; Play</button>
           <button id="stop-btn">&#9632; Stop</button>
         </div>
+        <button id="settings-toggle" class="settings-btn">&#9881; Controls &#9660;</button>
       </div>
     </div>
+
+    <div id="settings-panel">
 
     <div class="header-row">
       <div class="fx-controls">
@@ -39,7 +42,7 @@
           </div>
           <div class="adsr-group">
             <label for="flt-q">Res</label>
-            <input type="range" id="flt-q" min="0.1" max="20" step="0.1" value="1">
+            <input type="range" id="flt-q" min="0.1" max="12" step="0.1" value="1">
             <span class="adsr-val" id="flt-q-val">1.0</span>
           </div>
           <div class="fx-type">
@@ -52,7 +55,7 @@
           <span class="fx-label">Reverb</span>
           <div class="adsr-group">
             <label for="rvb-send">Send</label>
-            <input type="range" id="rvb-send" min="0" max="1" step="0.01" value="0">
+            <input type="range" id="rvb-send" min="0" max="0.8" step="0.01" value="0">
             <span class="adsr-val" id="rvb-send-val">0.00</span>
           </div>
           <div class="adsr-group">
@@ -89,10 +92,20 @@
       </div>
       <button id="clear-btn">&#10005; Clear All</button>
     </div>
+
+    </div><!-- #settings-panel -->
   </header>
 
+  <div class="section-bar">
+    <span class="section-label">Sequence</span>
+    <button class="collapse-btn" id="seq-toggle">&#9660;</button>
+  </div>
   <div id="piano-roll"></div>
 
+  <div class="section-bar">
+    <span class="section-label">Graph</span>
+    <button class="collapse-btn" id="graph-toggle">&#9660;</button>
+  </div>
   <div id="graph-wrap">
     <div id="graph"></div>
     <button id="fit-btn" title="Reset to optimal view">&#8859; Fit</button>

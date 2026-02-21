@@ -269,6 +269,37 @@ h1 {
   color: #00d4aa;
 }
 
+/* Settings toggle */
+
+#settings-panel {
+  overflow: hidden;
+  max-height: 200px;
+  transition: max-height 0.22s ease, opacity 0.22s ease;
+  opacity: 1;
+}
+
+#settings-panel.collapsed {
+  max-height: 0;
+  opacity: 0;
+}
+
+.settings-btn {
+  padding: 5px 12px;
+  background: #1c1c38;
+  color: #777;
+  border: 1px solid #3a3a5a;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-family: inherit;
+  transition: border-color 0.12s, color 0.12s;
+}
+
+.settings-btn.open {
+  border-color: #00d4aa;
+  color: #00d4aa;
+}
+
 /* Clear All */
 
 #clear-btn {
@@ -288,6 +319,42 @@ h1 {
   color: #ff8888;
   border-color: #883333;
 }
+
+/* ─── Section bars ───────────────────────────── */
+
+.section-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 16px;
+  background: #0f0f24;
+  border-top: 1px solid #1a1a30;
+  border-bottom: 1px solid #1a1a30;
+  flex-shrink: 0;
+}
+
+.section-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #444;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.collapse-btn {
+  background: none;
+  border: none;
+  color: #444;
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 2px 6px;
+  line-height: 1;
+  transition: color 0.12s, transform 0.2s;
+}
+
+.collapse-btn:hover { color: #00d4aa; }
+
+.collapse-btn.collapsed { transform: rotate(-90deg); }
 
 /* ─── Piano Roll ──────────────────────────────── */
 

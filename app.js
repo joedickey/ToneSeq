@@ -93,21 +93,24 @@ function formatFreq(hz)    { return hz >= 1000 ? (hz / 1000).toFixed(1) + 'kHz' 
 
 function initSynth() {
   synth = new Tone.PolySynth(Tone.Synth, {
+    maxPolyphony: 8,
     oscillator: { type: 'sine' },
     envelope: { attack: 0.01, decay: 0.1, sustain: 0.5, release: 0.4 },
   });
 
-  // Signal chain: synth → filter → destination (dry)
-  //                             → reverbSend → reverb → destination (wet)
+  // Signal chain: synth → filter → limiter → destination (dry)
+  //                             → reverbSend → reverb → limiter (wet)
   filter     = new Tone.Filter({ frequency: freqFromSlider(75), type: 'lowpass', Q: 1 });
   reverbSend = new Tone.Gain(0);
   reverb     = new Tone.Reverb({ decay: 2, wet: 1 }); // IR auto-generated on construction
+  const limiter = new Tone.Limiter(-3);
 
   synth.connect(filter);
-  filter.toDestination();
+  filter.connect(limiter);
   filter.connect(reverbSend);
   reverbSend.connect(reverb);
-  reverb.toDestination();
+  reverb.connect(limiter);
+  limiter.toDestination();
 
   loop = new Tone.Sequence(
     (time, step) => {
@@ -493,6 +496,30 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('stop-btn').addEventListener('click', stop);
   document.getElementById('clear-btn').addEventListener('click', clearAll);
   document.getElementById('fit-btn').addEventListener('click', fitGraph);
+
+  const settingsToggle = document.getElementById('settings-toggle');
+  const settingsPanel  = document.getElementById('settings-panel');
+  settingsToggle.addEventListener('click', () => {
+    const collapsed = settingsPanel.classList.toggle('collapsed');
+    settingsToggle.textContent = collapsed ? '\u2699 Controls \u25b6' : '\u2699 Controls \u25bc';
+    settingsToggle.classList.toggle('open', !collapsed);
+  });
+  // Start open
+  settingsToggle.classList.add('open');
+
+  function makeCollapseToggle(btnId, targetId, afterShow) {
+    const btn = document.getElementById(btnId);
+    const panel = document.getElementById(targetId);
+    btn.addEventListener('click', () => {
+      const isHidden = panel.style.display === 'none';
+      panel.style.display = isHidden ? '' : 'none';
+      btn.classList.toggle('collapsed', !isHidden);
+      if (isHidden && afterShow) afterShow();
+    });
+  }
+
+  makeCollapseToggle('seq-toggle',   'piano-roll');
+  makeCollapseToggle('graph-toggle', 'graph-wrap', fitGraph);
 
   // Refit whenever the graph panel is resized (e.g. window resize, devtools)
   let resizeTimer = null;
