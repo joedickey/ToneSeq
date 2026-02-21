@@ -35,6 +35,10 @@ let isPlaying = false;
 
 let prevPlayingNodes = [];
 
+let playbackMode   = 'forward';  // 'forward' | 'reverse' | 'pingpong'
+let activeStepArray = [];
+let seqPosition    = 0;
+
 // ═══════════════════════════════════════════════════════════
 // A. PIANO ROLL
 // ═══════════════════════════════════════════════════════════
@@ -91,6 +95,40 @@ function highlightPlayhead(step) {
 function freqFromSlider(v) { return Math.round(20 * Math.pow(1000, v / 100)); }
 function formatFreq(hz)    { return hz >= 1000 ? (hz / 1000).toFixed(1) + 'kHz' : hz + 'Hz'; }
 
+/** Build the ordered step array for the current playback mode. */
+function getStepArray(mode) {
+  const fwd = [...Array(STEPS).keys()];             // [0..15]
+  if (mode === 'reverse')  return [...fwd].reverse();              // [15..0]
+  if (mode === 'pingpong') return [...fwd, ...[...fwd].reverse()]; // [0..15,15..0]
+  return fwd;
+}
+
+/** (Re)build the Tone.Sequence for the current playbackMode. */
+function buildLoop() {
+  if (loop) { loop.stop(); loop.dispose(); }
+  activeStepArray = getStepArray(playbackMode);
+  seqPosition = 0;
+
+  loop = new Tone.Sequence(
+    (time, step) => {
+      seqPosition = (seqPosition + 1) % activeStepArray.length;
+      const nextGridStep = activeStepArray[seqPosition];
+
+      const activeNotes = NOTES.filter(n => grid[n][step]);
+      if (activeNotes.length > 0) {
+        synth.triggerAttackRelease(activeNotes, '16n', time);
+      }
+      scheduleVisual(() => {
+        highlightPlayhead(step);
+        updateGraphPlayhead(step, nextGridStep);
+      }, time);
+    },
+    activeStepArray,
+    '16n',
+  );
+  loop.start(0);
+}
+
 function initSynth() {
   synth = new Tone.PolySynth(Tone.Synth, {
     maxPolyphony: 8,
@@ -112,21 +150,16 @@ function initSynth() {
   reverb.connect(limiter);
   limiter.toDestination();
 
-  loop = new Tone.Sequence(
-    (time, step) => {
-      const activeNotes = NOTES.filter(n => grid[n][step]);
-      if (activeNotes.length > 0) {
-        synth.triggerAttackRelease(activeNotes, '16n', time);
-      }
-      scheduleVisual(() => {
-        highlightPlayhead(step);
-        updateGraphPlayhead(step);
-      }, time);
-    },
-    [...Array(STEPS).keys()],
-    '16n',
-  );
-  loop.start(0);
+  buildLoop();
+}
+
+/** Switch playback mode, rebuilding the loop (restarts transport if playing). */
+function setPlaybackMode(mode) {
+  playbackMode = mode;
+  const wasPlaying = isPlaying;
+  if (wasPlaying) { Tone.Transport.stop(); isPlaying = false; }
+  buildLoop();
+  if (wasPlaying) { Tone.Transport.start(); isPlaying = true; }
 }
 
 function scheduleVisual(cb, time) {
@@ -148,6 +181,7 @@ function stop() {
   if (!isPlaying) return;
   Tone.Transport.stop();
   isPlaying = false;
+  seqPosition = 0;
   document.querySelectorAll('.step-cell.playhead').forEach(el => el.classList.remove('playhead'));
   prevPlayingNodes.forEach(n => n.removeClass('playing'));
   prevPlayingNodes = [];
@@ -280,16 +314,23 @@ function buildChordGroups() {
 }
 
 /**
- * Snap every chord stack into a strict vertical column above its anchor.
- * Called after the COSE layout settles so the anchor's final position is known.
+ * Snap every chord stack outward from the circle center along the step's
+ * radial direction, so stacks never collide with nodes on the opposite side.
+ * Called after anchor positions are set by positionNodes().
  */
 function snapChordStacks() {
-  chordGroups.forEach(({ nodeIds, anchorId }) => {
+  chordGroups.forEach(({ nodeIds, anchorId }, step) => {
     if (nodeIds.length <= 1) return;
     const { x: ax, y: ay } = cy.getElementById(anchorId).position();
+    const angle = -Math.PI / 2 + (step / STEPS) * 2 * Math.PI;
+    const dx = Math.cos(angle);
+    const dy = Math.sin(angle);
     nodeIds.forEach((id, i) => {
-      const stepsAbove = nodeIds.length - 1 - i; // 0 for anchor, counting up
-      cy.getElementById(id).position({ x: ax, y: ay - stepsAbove * NODE_STACK_SPACING });
+      const stepsOut = nodeIds.length - 1 - i; // 0 = anchor (innermost)
+      cy.getElementById(id).position({
+        x: ax + stepsOut * NODE_STACK_SPACING * dx,
+        y: ay + stepsOut * NODE_STACK_SPACING * dy,
+      });
     });
   });
 }
@@ -313,15 +354,21 @@ function fitGraph() {
 function positionNodes() {
   const containerW = cy.container().clientWidth  || 400;
   const containerH = cy.container().clientHeight || 380;
-  const r  = Math.min(containerW, containerH) * 0.28;
-  const cx = containerW  / 2;
+  const containerMin = Math.min(containerW, containerH);
+
+  const n = stepSequence.length;
+  const baseR = containerMin * 0.28;
+  // Minimum radius so adjacent anchors have at least 8px gap (node diameter = 38px)
+  const minR  = n > 1 ? (38 + 8) / (2 * Math.sin(Math.PI / n)) : 0;
+  const r     = Math.max(baseR, minR);
+  const cx    = containerW / 2;
   const cy_center = containerH / 2;
 
   stepSequence.forEach(({ step, anchorId }) => {
     // -π/2 puts step 0 at 12 o'clock; adding a positive fraction goes clockwise
     const angle = -Math.PI / 2 + (step / STEPS) * 2 * Math.PI;
     cy.getElementById(anchorId).position({
-      x: cx       + r * Math.cos(angle),
+      x: cx        + r * Math.cos(angle),
       y: cy_center + r * Math.sin(angle),
     });
   });
@@ -436,9 +483,9 @@ function updateGraph() {
 /**
  * Called on every sequencer tick.
  * Lights up the nodes at the current step, then launches the traversal ball
- * toward the next step's anchor — arriving just in time for that step to fire.
+ * toward the next active chord — respecting the current playback mode direction.
  */
-function updateGraphPlayhead(step) {
+function updateGraphPlayhead(step, nextGridStep) {
   if (!cy) return;
 
   // Clear previous node highlights
@@ -457,21 +504,23 @@ function updateGraphPlayhead(step) {
   const ball = cy.getElementById('__ball__');
   if (!ball.length || stepSequence.length < 2) return;
 
-  const idx = stepSequence.findIndex(g => g.step === step);
-  if (idx < 0) return;
+  const srcGroup = chordGroups.get(step);
+  if (!srcGroup) return;
 
-  const current  = stepSequence[idx];
-  const nextIdx  = (idx + 1) % stepSequence.length;
-  const next     = stepSequence[nextIdx];
+  // Find the next active chord at or after nextGridStep in activeStepArray
+  const n = activeStepArray.length;
+  const seqPos = activeStepArray.indexOf(nextGridStep);
+  let tgtGroup = null;
+  let dist = 1;
+  for (let i = 0; i < n; i++) {
+    const gs = activeStepArray[(seqPos + i) % n];
+    if (chordGroups.has(gs)) { tgtGroup = chordGroups.get(gs); dist = i + 1; break; }
+  }
+  if (!tgtGroup) return;
 
-  const srcNode = cy.getElementById(current.anchorId);
-  const tgtNode = cy.getElementById(next.anchorId);
+  const srcNode = cy.getElementById(srcGroup.anchorId);
+  const tgtNode = cy.getElementById(tgtGroup.anchorId);
   if (!srcNode.length || !tgtNode.length) return;
-
-  // How many steps until the next chord fires (wraps cyclically)
-  const dist = idx < stepSequence.length - 1
-    ? next.step - current.step
-    : (STEPS - current.step) + next.step;
 
   // Duration = rhythmic gap converted to milliseconds at current BPM
   const stepMs   = (60 / Tone.Transport.bpm.value / 4) * 1000; // one 16th note
@@ -535,6 +584,14 @@ document.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('.waveform-btn').forEach(b => b.classList.remove('selected'));
       btn.classList.add('selected');
       setWaveform(btn.dataset.wave);
+    });
+  });
+
+  document.querySelectorAll('.playmode-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.playmode-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      setPlaybackMode(btn.dataset.mode);
     });
   });
 

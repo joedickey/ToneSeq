@@ -109,6 +109,37 @@ h1 {
   color: #00d4aa;
 }
 
+/* Playmode */
+
+.playmode-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.playmode-btn {
+  padding: 5px 12px;
+  background: #1c1c38;
+  color: #777;
+  border: 1px solid #3a3a5a;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-family: inherit;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+
+.playmode-btn:hover {
+  border-color: #00d4aa88;
+  color: #aaa;
+}
+
+.playmode-btn.selected {
+  background: #00d4aa1a;
+  border-color: #00d4aa;
+  color: #00d4aa;
+}
+
 /* Transport */
 
 .transport-controls {
@@ -168,7 +199,8 @@ h1 {
   color: #00d4aa;
   text-transform: uppercase;
   letter-spacing: 1px;
-  width: 12px;
+  min-width: 36px;
+  flex-shrink: 0;
 }
 
 .adsr-group input[type="range"] {
