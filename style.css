@@ -17,12 +17,19 @@ body {
 
 header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 8px;
   padding: 10px 20px;
   background: #12122a;
   border-bottom: 1px solid #2a2a4a;
   flex-shrink: 0;
+}
+
+.header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
 }
 
 h1 {
@@ -139,6 +146,91 @@ h1 {
 #stop-btn:hover {
   background: #252545;
   color: #ccc;
+}
+
+/* ADSR */
+
+.adsr-controls {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.adsr-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.adsr-group label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #00d4aa;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  width: 12px;
+}
+
+.adsr-group input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100px;
+  height: 4px;
+  background: #2a2a4a;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.adsr-group input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #00d4aa;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.adsr-group input[type="range"]::-webkit-slider-thumb:hover {
+  background: #00eebb;
+}
+
+.adsr-group input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #00d4aa;
+  border: none;
+  cursor: pointer;
+}
+
+.adsr-val {
+  font-size: 0.75rem;
+  font-family: monospace;
+  color: #778;
+  min-width: 36px;
+}
+
+/* Clear All */
+
+#clear-btn {
+  padding: 5px 14px;
+  background: #1c1c38;
+  color: #c06060;
+  border: 1px solid #5a2a2a;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-family: inherit;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+#clear-btn:hover {
+  background: #3a1a1a;
+  color: #ff8888;
+  border-color: #883333;
 }
 
 /* ─── Piano Roll ──────────────────────────────── */

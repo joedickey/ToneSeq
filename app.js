@@ -153,6 +153,20 @@ function setWaveform(type) {
   synth.set({ oscillator: { type } });
 }
 
+function setEnvelope(param, value) {
+  synth.set({ envelope: { [param]: value } });
+}
+
+function clearAll() {
+  NOTES.forEach(note => {
+    for (let s = 0; s < STEPS; s++) {
+      grid[note][s] = false;
+    }
+  });
+  document.querySelectorAll('.step-cell.active').forEach(el => el.classList.remove('active'));
+  updateGraph();
+}
+
 // ═══════════════════════════════════════════════════════════
 // C. GRAPH VISUALIZATION (Cytoscape.js)
 // ═══════════════════════════════════════════════════════════
@@ -368,6 +382,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('play-btn').addEventListener('click', play);
   document.getElementById('stop-btn').addEventListener('click', stop);
+  document.getElementById('clear-btn').addEventListener('click', clearAll);
 
   document.getElementById('bpm').addEventListener('input', e => setBPM(e.target.value));
 
@@ -376,6 +391,23 @@ document.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('.waveform-btn').forEach(b => b.classList.remove('selected'));
       btn.classList.add('selected');
       setWaveform(btn.dataset.wave);
+    });
+  });
+
+  // ADSR sliders
+  const adsrParams = [
+    { id: 'adsr-a', param: 'attack',  valId: 'adsr-a-val', unit: 's' },
+    { id: 'adsr-d', param: 'decay',   valId: 'adsr-d-val', unit: 's' },
+    { id: 'adsr-s', param: 'sustain', valId: 'adsr-s-val', unit: ''  },
+    { id: 'adsr-r', param: 'release', valId: 'adsr-r-val', unit: 's' },
+  ];
+  adsrParams.forEach(({ id, param, valId, unit }) => {
+    const slider = document.getElementById(id);
+    const display = document.getElementById(valId);
+    slider.addEventListener('input', () => {
+      const val = parseFloat(slider.value);
+      setEnvelope(param, val);
+      display.textContent = val.toFixed(2) + unit;
     });
   });
 });

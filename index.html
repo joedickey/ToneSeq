@@ -8,22 +8,50 @@
 </head>
 <body>
   <header>
-    <h1>WebSeq</h1>
-    <div class="controls">
-      <div class="bpm-control">
-        <label for="bpm">BPM</label>
-        <input type="number" id="bpm" value="120" min="20" max="400">
+    <div class="header-row">
+      <h1>WebSeq</h1>
+      <div class="controls">
+        <div class="bpm-control">
+          <label for="bpm">BPM</label>
+          <input type="number" id="bpm" value="120" min="20" max="400">
+        </div>
+        <div class="waveform-control">
+          <span>Waveform</span>
+          <button class="waveform-btn selected" data-wave="sine">Sine</button>
+          <button class="waveform-btn" data-wave="square">Square</button>
+          <button class="waveform-btn" data-wave="sawtooth">Saw</button>
+        </div>
+        <div class="transport-controls">
+          <button id="play-btn">&#9654; Play</button>
+          <button id="stop-btn">&#9632; Stop</button>
+        </div>
       </div>
-      <div class="waveform-control">
-        <span>Waveform</span>
-        <button class="waveform-btn selected" data-wave="sine">Sine</button>
-        <button class="waveform-btn" data-wave="square">Square</button>
-        <button class="waveform-btn" data-wave="sawtooth">Saw</button>
+    </div>
+
+    <div class="header-row">
+      <div class="adsr-controls">
+        <div class="adsr-group">
+          <label for="adsr-a">A</label>
+          <input type="range" id="adsr-a" min="0.001" max="2" step="0.005" value="0.01">
+          <span class="adsr-val" id="adsr-a-val">0.01s</span>
+        </div>
+        <div class="adsr-group">
+          <label for="adsr-d">D</label>
+          <input type="range" id="adsr-d" min="0.001" max="2" step="0.005" value="0.1">
+          <span class="adsr-val" id="adsr-d-val">0.10s</span>
+        </div>
+        <div class="adsr-group">
+          <label for="adsr-s">S</label>
+          <input type="range" id="adsr-s" min="0" max="1" step="0.01" value="0.5">
+          <span class="adsr-val" id="adsr-s-val">0.50</span>
+        </div>
+        <div class="adsr-group">
+          <label for="adsr-r">R</label>
+          <input type="range" id="adsr-r" min="0.001" max="5" step="0.01" value="0.4">
+          <span class="adsr-val" id="adsr-r-val">0.40s</span>
+        </div>
       </div>
-      <div class="transport-controls">
-        <button id="play-btn">&#9654; Play</button>
-        <button id="stop-btn">&#9632; Stop</button>
-      </div>
+      <button id="clear-btn">&#10005; Clear All</button>
     </div>
   </header>
 
