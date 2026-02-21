@@ -1,0 +1,215 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #0d0d1a;
+  color: #ccc;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ─── Header ─────────────────────────────────── */
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  background: #12122a;
+  border-bottom: 1px solid #2a2a4a;
+  flex-shrink: 0;
+}
+
+h1 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: #00d4aa;
+  text-transform: uppercase;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+/* BPM */
+
+.bpm-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+#bpm {
+  width: 64px;
+  background: #1c1c38;
+  color: #eee;
+  border: 1px solid #3a3a5a;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+#bpm:focus {
+  outline: none;
+  border-color: #00d4aa;
+}
+
+/* Waveform */
+
+.waveform-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.waveform-btn {
+  padding: 5px 12px;
+  background: #1c1c38;
+  color: #777;
+  border: 1px solid #3a3a5a;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-family: inherit;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+
+.waveform-btn:hover {
+  border-color: #00d4aa88;
+  color: #aaa;
+}
+
+.waveform-btn.selected {
+  background: #00d4aa1a;
+  border-color: #00d4aa;
+  color: #00d4aa;
+}
+
+/* Transport */
+
+.transport-controls {
+  display: flex;
+  gap: 8px;
+}
+
+#play-btn,
+#stop-btn {
+  padding: 6px 18px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-family: inherit;
+  font-weight: 600;
+  transition: background 0.12s, color 0.12s;
+}
+
+#play-btn {
+  background: #00d4aa;
+  color: #0d0d1a;
+}
+
+#play-btn:hover {
+  background: #00eebb;
+}
+
+#stop-btn {
+  background: #1c1c38;
+  color: #888;
+  border: 1px solid #3a3a5a;
+}
+
+#stop-btn:hover {
+  background: #252545;
+  color: #ccc;
+}
+
+/* ─── Piano Roll ──────────────────────────────── */
+
+#piano-roll {
+  display: grid;
+  grid-template-columns: 48px repeat(16, 1fr);
+  grid-template-rows: 22px repeat(13, 30px);
+  gap: 2px;
+  padding: 12px 16px 8px;
+  background: #0d0d1a;
+  flex-shrink: 0;
+}
+
+.pr-label {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 8px;
+  font-size: 11px;
+  font-family: monospace;
+  color: #556;
+  user-select: none;
+}
+
+.pr-step-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-family: monospace;
+  color: #3a3a58;
+  user-select: none;
+}
+
+.step-cell {
+  background: #191929;
+  border-radius: 3px;
+  cursor: pointer;
+  border: 1px solid #1e1e38;
+  transition: background 0.07s, border-color 0.07s, box-shadow 0.07s;
+  user-select: none;
+}
+
+.step-cell:hover {
+  background: #20203a;
+  border-color: #2a2a4a;
+}
+
+.step-cell.active {
+  background: #00d4aa;
+  border-color: #00d4aa;
+  box-shadow: 0 0 8px rgba(0, 212, 170, 0.35);
+}
+
+.step-cell.playhead {
+  background: #1c1c38;
+  border-color: #303060;
+}
+
+.step-cell.active.playhead {
+  background: #ffcc00;
+  border-color: #ffcc00;
+  box-shadow: 0 0 10px rgba(255, 204, 0, 0.5);
+}
+
+/* ─── Graph ───────────────────────────────────── */
+
+#graph {
+  flex: 1;
+  min-height: 380px;
+  background: #08080f;
+  border-top: 1px solid #1a1a30;
+}
