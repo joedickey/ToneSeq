@@ -15,8 +15,13 @@
           <label for="bpm">BPM</label>
           <input type="number" id="bpm" value="120" min="20" max="400">
         </div>
+        <div class="vol-control">
+          <label for="vol">Vol</label>
+          <input type="range" id="vol" min="-40" max="0" step="1" value="0">
+          <span class="adsr-val" id="vol-val">0dB</span>
+        </div>
         <div class="waveform-control">
-          <span>Waveform</span>
+          <span>Wave</span>
           <button class="waveform-btn selected" data-wave="sine">Sine</button>
           <button class="waveform-btn" data-wave="square">Square</button>
           <button class="waveform-btn" data-wave="sawtooth">Saw</button>
@@ -26,8 +31,8 @@
           <button id="stop-btn">&#9632; Stop</button>
         </div>
         <div class="playmode-control">
-          <button class="playmode-btn selected" data-mode="forward">&#9658; Fwd</button>
-          <button class="playmode-btn" data-mode="reverse">&#9668; Rev</button>
+          <button class="playmode-btn selected" data-mode="forward">&#9654; Fwd</button>
+          <button class="playmode-btn" data-mode="reverse">&#9664; Rev</button>
           <button class="playmode-btn" data-mode="pingpong">&#8646; Ping</button>
         </div>
         <button id="settings-toggle" class="settings-btn">&#9881; Controls &#9660;</button>
@@ -95,7 +100,39 @@
           <span class="adsr-val" id="adsr-r-val">0.40s</span>
         </div>
       </div>
-      <button id="clear-btn">&#10005; Clear All</button>
+      <div class="seq-actions">
+        <button id="random-btn">&#9861; Random Seq</button>
+        <button id="clear-btn">&#10005; Clear All</button>
+      </div>
+    </div>
+
+    <div class="header-row">
+      <div class="pitch-controls">
+        <div class="octave-group">
+          <span class="fx-label">Octave</span>
+          <button class="oct-btn" id="oct-down">&#8722;</button>
+          <span id="oct-display">4</span>
+          <button class="oct-btn" id="oct-up">&#43;</button>
+        </div>
+        <div class="fx-sep"></div>
+        <div class="root-group">
+          <span class="fx-label">Root</span>
+          <div class="root-btns">
+            <button class="root-btn selected" data-semitone="0">C</button>
+            <button class="root-btn" data-semitone="1">C#</button>
+            <button class="root-btn" data-semitone="2">D</button>
+            <button class="root-btn" data-semitone="3">D#</button>
+            <button class="root-btn" data-semitone="4">E</button>
+            <button class="root-btn" data-semitone="5">F</button>
+            <button class="root-btn" data-semitone="6">F#</button>
+            <button class="root-btn" data-semitone="7">G</button>
+            <button class="root-btn" data-semitone="8">G#</button>
+            <button class="root-btn" data-semitone="9">A</button>
+            <button class="root-btn" data-semitone="10">A#</button>
+            <button class="root-btn" data-semitone="11">B</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     </div><!-- #settings-panel -->
