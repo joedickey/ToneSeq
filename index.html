@@ -49,11 +49,13 @@
             <label for="flt-freq">Freq</label>
             <input type="range" id="flt-freq" min="0" max="100" step="1" value="75">
             <span class="adsr-val" id="flt-freq-val">3.6kHz</span>
+            <button class="seq-toggle-btn" data-param="flt-freq" title="Automate Freq">SEQ</button>
           </div>
           <div class="adsr-group">
             <label for="flt-q">Res</label>
             <input type="range" id="flt-q" min="0.1" max="12" step="0.1" value="1">
             <span class="adsr-val" id="flt-q-val">1.0</span>
+            <button class="seq-toggle-btn" data-param="flt-q" title="Automate Res">SEQ</button>
           </div>
           <div class="fx-type">
             <button class="filter-type-btn selected" data-type="lowpass">LP</button>
@@ -67,11 +69,13 @@
             <label for="rvb-send">Send</label>
             <input type="range" id="rvb-send" min="0" max="0.8" step="0.01" value="0">
             <span class="adsr-val" id="rvb-send-val">0.00</span>
+            <button class="seq-toggle-btn" data-param="rvb-send" title="Automate Send">SEQ</button>
           </div>
           <div class="adsr-group">
             <label for="rvb-decay">Len</label>
             <input type="range" id="rvb-decay" min="0.1" max="10" step="0.1" value="2">
             <span class="adsr-val" id="rvb-decay-val">2.0s</span>
+            <button class="seq-toggle-btn" data-param="rvb-decay" title="Automate Len">SEQ</button>
           </div>
         </div>
       </div>
@@ -83,21 +87,25 @@
           <label for="adsr-a">A</label>
           <input type="range" id="adsr-a" min="0.001" max="2" step="0.005" value="0.01">
           <span class="adsr-val" id="adsr-a-val">0.01s</span>
+          <button class="seq-toggle-btn" data-param="adsr-a" title="Automate Attack">SEQ</button>
         </div>
         <div class="adsr-group">
           <label for="adsr-d">D</label>
           <input type="range" id="adsr-d" min="0.001" max="2" step="0.005" value="0.1">
           <span class="adsr-val" id="adsr-d-val">0.10s</span>
+          <button class="seq-toggle-btn" data-param="adsr-d" title="Automate Decay">SEQ</button>
         </div>
         <div class="adsr-group">
           <label for="adsr-s">S</label>
           <input type="range" id="adsr-s" min="0" max="1" step="0.01" value="0.5">
           <span class="adsr-val" id="adsr-s-val">0.50</span>
+          <button class="seq-toggle-btn" data-param="adsr-s" title="Automate Sustain">SEQ</button>
         </div>
         <div class="adsr-group">
           <label for="adsr-r">R</label>
           <input type="range" id="adsr-r" min="0.001" max="5" step="0.01" value="0.4">
           <span class="adsr-val" id="adsr-r-val">0.40s</span>
+          <button class="seq-toggle-btn" data-param="adsr-r" title="Automate Release">SEQ</button>
         </div>
       </div>
       <div class="seq-actions">
@@ -138,11 +146,18 @@
     </div><!-- #settings-panel -->
   </header>
 
-  <div class="section-bar">
-    <span class="section-label">Sequence</span>
+  <div class="section-bar" id="seq-section-bar">
+    <div class="seq-tabs" id="seq-tabs">
+      <button class="seq-tab active" data-tab="notes" style="--tab-color: #00d4aa;">Notes</button>
+      <!-- param tabs injected dynamically -->
+    </div>
+    <button class="seq-action-btn" id="seq-clear-btn" title="Clear current sequencer">Clr</button>
     <button class="collapse-btn" id="seq-toggle">&#9660;</button>
   </div>
-  <div id="piano-roll"></div>
+  <div id="seq-body">
+    <div id="piano-roll"></div>
+    <div id="auto-seq-panel" style="display:none;"></div>
+  </div>
 
   <div class="section-bar">
     <span class="section-label">Graph</span>

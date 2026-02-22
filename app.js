@@ -39,6 +39,66 @@ let NOTES       = getCurrentNotes();
 let NOTE_LABELS = getCurrentNoteLabels();
 
 // ═══════════════════════════════════════════════════════════
+// AUTOMATION PARAMS CONFIG
+// ═══════════════════════════════════════════════════════════
+
+const AUTO_PARAMS = [
+  {
+    id: 'flt-freq', label: 'Freq', color: '#4da6ff',
+    min: 0, max: 100, step: 1, default: 75,
+    format: v => formatFreq(freqFromSlider(v)),
+    apply: v => { if (filter) filter.frequency.value = freqFromSlider(v); },
+  },
+  {
+    id: 'flt-q', label: 'Res', color: '#a78bfa',
+    min: 0.1, max: 12, step: 0.1, default: 1,
+    format: v => v.toFixed(1),
+    apply: v => { if (filter) filter.Q.value = v; },
+  },
+  {
+    id: 'rvb-send', label: 'Send', color: '#34d399',
+    min: 0, max: 0.8, step: 0.01, default: 0,
+    format: v => v.toFixed(2),
+    apply: v => { if (reverbSend) reverbSend.gain.value = v; },
+  },
+  {
+    id: 'rvb-decay', label: 'Len', color: '#22d3ee',
+    min: 0.1, max: 10, step: 0.1, default: 2,
+    format: v => v.toFixed(1) + 's',
+    apply: v => {
+      if (!reverb) return;
+      reverb.decay = v;
+      clearTimeout(reverbDecayAutoTimer);
+      reverbDecayAutoTimer = setTimeout(() => reverb.generate(), 500);
+    },
+  },
+  {
+    id: 'adsr-a', label: 'Atk', color: '#fbbf24',
+    min: 0.001, max: 2, step: 0.005, default: 0.01,
+    format: v => v.toFixed(2) + 's',
+    apply: v => setEnvelope('attack', v),
+  },
+  {
+    id: 'adsr-d', label: 'Dec', color: '#f97316',
+    min: 0.001, max: 2, step: 0.005, default: 0.1,
+    format: v => v.toFixed(2) + 's',
+    apply: v => setEnvelope('decay', v),
+  },
+  {
+    id: 'adsr-s', label: 'Sus', color: '#fb923c',
+    min: 0, max: 1, step: 0.01, default: 0.5,
+    format: v => v.toFixed(2),
+    apply: v => setEnvelope('sustain', v),
+  },
+  {
+    id: 'adsr-r', label: 'Rel', color: '#e879f9',
+    min: 0.001, max: 5, step: 0.01, default: 0.4,
+    format: v => v.toFixed(2) + 's',
+    apply: v => setEnvelope('release', v),
+  },
+];
+
+// ═══════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════
 
@@ -62,6 +122,13 @@ let cy         = null;
 let isPlaying  = false;
 
 let prevPlayingNodes = [];
+
+// Automation sequencing state
+const autoSeqs = {};              // paramId → Float64Array(16)
+const autoActive = new Set();     // paramIds currently in seq mode
+let activeTab = 'notes';          // 'notes' | paramId
+const prevAutoPlayingNode = {};   // paramId → cy node | null
+let reverbDecayAutoTimer = null;
 
 let playbackMode        = 'forward';  // 'forward' | 'reverse' | 'pingpong'
 let pendingPlaybackMode = null;
@@ -175,9 +242,21 @@ function buildLoop() {
       const velocity = 1 / Math.sqrt(activeNotes.length);
       synth.triggerAttackRelease(activeNotes, '16n', time, velocity);
     }
+
+    // Apply automation for all active params at this step
+    autoActive.forEach(paramId => {
+      const seq = autoSeqs[paramId];
+      if (!seq) return;
+      const cfg = AUTO_PARAMS.find(p => p.id === paramId);
+      if (cfg) cfg.apply(seq[step]);
+    });
+
     scheduleVisual(() => {
       highlightPlayhead(step);
       updateGraphPlayhead(step, nextGridStep);
+      highlightAutoBarPlayhead(step);
+      // Update all active auto params — each has its own ring in cy
+      autoActive.forEach(paramId => updateAutoGraphPlayhead(paramId, step, nextGridStep));
     }, time);
   }, '16n');
 }
@@ -248,6 +327,16 @@ function stop() {
   prevPlayingNodes = [];
   const ball = cy && cy.getElementById('__ball__');
   if (ball && ball.length) { ball.stop(); ball.style('opacity', 0); }
+
+  document.querySelectorAll('.auto-bar-track.playhead').forEach(el => el.classList.remove('playhead'));
+  autoActive.forEach(paramId => {
+    if (prevAutoPlayingNode[paramId]) {
+      prevAutoPlayingNode[paramId].removeClass('auto-playing');
+      prevAutoPlayingNode[paramId] = null;
+    }
+    const autoBall = cy && cy.getElementById(`__auto-ball-${paramId}__`);
+    if (autoBall && autoBall.length) { autoBall.stop(); autoBall.style('opacity', 0); }
+  });
 }
 
 function setBPM(val) {
@@ -263,10 +352,63 @@ function setMasterVolume(db) {
   if (masterVol) masterVol.volume.rampTo(db, 0.05);
 }
 
+function refreshAutoSeqPanel(paramId) {
+  const cfg   = AUTO_PARAMS.find(p => p.id === paramId);
+  const panel = document.getElementById(`auto-seq-${paramId}`);
+  if (!panel || !cfg || !autoSeqs[paramId]) return;
+  const seq = autoSeqs[paramId];
+  panel.querySelectorAll('.auto-bar-track').forEach((track, s) => {
+    const norm = normalizeAutoValue(paramId, seq[s]);
+    const fill = track.querySelector('.auto-bar-fill');
+    if (fill) fill.style.height = (norm * 100) + '%';
+  });
+}
+
 function clearAll() {
+  // Clear notes grid
   for (let r = 0; r < NUM_ROWS; r++) grid[r].fill(false);
   document.querySelectorAll('.step-cell.active').forEach(el => el.classList.remove('active'));
   updateGraph();
+  // Reset all active param sequences to default (keep params in seq mode)
+  autoActive.forEach(paramId => {
+    const cfg = AUTO_PARAMS.find(p => p.id === paramId);
+    if (!cfg) return;
+    if (!autoSeqs[paramId]) autoSeqs[paramId] = new Float64Array(16);
+    autoSeqs[paramId].fill(cfg.default);
+    refreshAutoSeqPanel(paramId);
+    for (let s = 0; s < 16; s++) updateAutoGraphNode(paramId, s);
+  });
+}
+
+function clearCurrentSeq() {
+  if (activeTab === 'notes') {
+    for (let r = 0; r < NUM_ROWS; r++) grid[r].fill(false);
+    document.querySelectorAll('.step-cell.active').forEach(el => el.classList.remove('active'));
+    updateGraph();
+  } else {
+    const paramId = activeTab;
+    const cfg = AUTO_PARAMS.find(p => p.id === paramId);
+    if (!cfg || !autoSeqs[paramId]) return;
+    autoSeqs[paramId].fill(cfg.default);
+    refreshAutoSeqPanel(paramId);
+    for (let s = 0; s < 16; s++) updateAutoGraphNode(paramId, s);
+  }
+}
+
+function randomizeAutoSeq(paramId) {
+  const cfg = AUTO_PARAMS.find(p => p.id === paramId);
+  if (!cfg) return;
+  if (!autoSeqs[paramId]) autoSeqs[paramId] = new Float64Array(16);
+  const seq = autoSeqs[paramId];
+  // Smooth random walk through param range
+  let val = cfg.min + Math.random() * (cfg.max - cfg.min);
+  for (let s = 0; s < 16; s++) {
+    const target = cfg.min + Math.random() * (cfg.max - cfg.min);
+    val = val + (target - val) * 0.45;
+    seq[s] = Math.max(cfg.min, Math.min(cfg.max, val));
+  }
+  refreshAutoSeqPanel(paramId);
+  for (let s = 0; s < 16; s++) updateAutoGraphNode(paramId, s);
 }
 
 // ─── Random Sequence ───────────────────────────────────────
@@ -464,6 +606,57 @@ function initGraph() {
           'curve-style': 'straight',
         },
       },
+      {
+        selector: 'node.auto-node',
+        style: {
+          'width': 'data(size)', 'height': 'data(size)',
+          'background-color': 'data(bgColor)',
+          'border-width': 1.5, 'border-color': 'data(color)',
+          'label': 'data(label)',
+          'font-size': '8px', 'font-family': 'monospace',
+          'color': 'data(color)',
+          'text-valign': 'center', 'text-halign': 'center',
+          'text-wrap': 'none',
+        },
+      },
+      {
+        selector: 'node.auto-node.auto-playing',
+        style: {
+          'border-color': '#ffcc00', 'border-width': 2.5,
+          'color': '#ffcc00',
+        },
+      },
+      {
+        selector: 'edge[type = "auto-ring"]',
+        style: {
+          'width': 1,
+          'line-color': 'data(edgeColor)',
+          'target-arrow-shape': 'none',
+          'source-arrow-shape': 'none',
+          'curve-style': 'straight',
+        },
+      },
+      {
+        selector: 'node.auto-ball',
+        style: {
+          'width': 10, 'height': 10,
+          'background-color': 'data(color)',
+          'border-width': 0,
+          'label': '', 'opacity': 0, 'z-index': 999,
+        },
+      },
+      {
+        selector: 'node.auto-ring-label',
+        style: {
+          'width': 1, 'height': 1,
+          'background-opacity': 0,
+          'border-width': 0,
+          'label': 'data(label)',
+          'font-size': '13px', 'font-weight': 700, 'font-family': 'monospace',
+          'color': 'data(dimColor)',
+          'text-valign': 'center', 'text-halign': 'center',
+        },
+      },
     ],
     elements: [],
     layout: { name: 'null' },
@@ -515,32 +708,85 @@ function snapChordStacks() {
 function fitGraph() {
   if (!cy) return;
   cy.resize();
-  positionNodes();
+  positionAllRings();
 }
 
-function positionNodes() {
-  const containerW = cy.container().clientWidth  || 400;
-  const containerH = cy.container().clientHeight || 380;
-  const containerMin = Math.min(containerW, containerH);
+/**
+ * Planet formation: notes ring at canvas centre; each auto ring is a
+ * separate satellite ring positioned at orbit distance around it.
+ * Rings never overlap — orbit distance is computed from outer edges.
+ */
+function positionAllRings() {
+  if (!cy) return;
+  const containerW = cy.container().clientWidth  || 600;
+  const containerH = cy.container().clientHeight || 400;
+  const cx   = containerW / 2;
+  const cy_c = containerH / 2;
 
-  const n     = stepSequence.length;
-  const baseR = containerMin * 0.28;
-  const minR  = n > 1 ? (38 + 8) / (2 * Math.sin(Math.PI / n)) : 0;
-  const r     = Math.max(baseR, minR);
-  const cx    = containerW / 2;
-  const cy_center = containerH / 2;
+  const autoParamList  = [...autoActive];
+  const numAuto        = autoParamList.length;
 
+  const NOTE_NODE     = 38;
+  const AUTO_NODE_MAX = 42;  // max auto node diameter (min 28, max 42)
+  const GAP           = 36;  // clear space between ring outer edges
+
+  // Notes ring radius (independent of auto rings)
+  const n = stepSequence.length;
+  const containerMin  = Math.min(containerW, containerH);
+  const noteMinR      = n > 1 ? (NOTE_NODE / 2 + 8) / Math.sin(Math.PI / n) : 0;
+  const notesR        = Math.max(noteMinR, containerMin * 0.28, 50);
+
+  // Find max chord stack depth to compute notes ring outer edge accurately
+  let maxStackNodes = 1;
+  chordGroups.forEach(({ nodeIds }) => {
+    if (nodeIds.length > maxStackNodes) maxStackNodes = nodeIds.length;
+  });
+  const noteOuterEdge = notesR + (maxStackNodes - 1) * NODE_STACK_SPACING + NOTE_NODE / 2;
+
+  // Auto ring radius — minimum to fit 16 nodes at max size without overlap
+  const AUTO_R = Math.max(88, (AUTO_NODE_MAX / 2 + 5) / Math.sin(Math.PI / 16));
+
+  // Minimum orbit distance to keep auto rings clear of the notes ring (including stacks)
+  const minFromNotes = noteOuterEdge + GAP + AUTO_R + AUTO_NODE_MAX / 2;
+
+  // Minimum orbit distance to prevent adjacent auto rings from overlapping each other
+  const minFromSiblings = numAuto > 1
+    ? (AUTO_R + AUTO_NODE_MAX / 2 + GAP) / Math.sin(Math.PI / numAuto)
+    : 0;
+
+  const orbitDist = Math.max(minFromNotes, minFromSiblings);
+
+  // Position notes ring nodes around canvas centre
   stepSequence.forEach(({ step, anchorId }) => {
     const angle = -Math.PI / 2 + (step / STEPS) * 2 * Math.PI;
     cy.getElementById(anchorId).position({
-      x: cx        + r * Math.cos(angle),
-      y: cy_center + r * Math.sin(angle),
+      x: cx  + notesR * Math.cos(angle),
+      y: cy_c + notesR * Math.sin(angle),
     });
   });
-
   snapChordStacks();
+
+  // Position auto rings as evenly spaced satellites around notes ring
+  autoParamList.forEach((paramId, i) => {
+    const orbitAngle = (i / Math.max(numAuto, 1)) * 2 * Math.PI;
+    const ringCx = cx   + orbitDist * Math.cos(orbitAngle);
+    const ringCy = cy_c + orbitDist * Math.sin(orbitAngle);
+    for (let s = 0; s < 16; s++) {
+      const node = cy.getElementById(`auto-${paramId}-${s}`);
+      if (!node.length) continue;
+      const a = -Math.PI / 2 + (s / 16) * 2 * Math.PI;
+      node.position({ x: ringCx + AUTO_R * Math.cos(a), y: ringCy + AUTO_R * Math.sin(a) });
+    }
+    // Place center label at ring centre
+    const centerLabel = cy.getElementById(`__auto-center-${paramId}__`);
+    if (centerLabel.length) centerLabel.position({ x: ringCx, y: ringCy });
+  });
+
   cy.fit(40);
 }
+
+/** Legacy alias */
+function positionNodes() { positionAllRings(); }
 
 function updateGraph() {
   if (!cy) return;
@@ -553,15 +799,19 @@ function updateGraph() {
 
   const activeIds = new Set([...chordGroups.values()].flatMap(g => g.nodeIds));
 
-  cy.edges().remove();
+  // Remove only notes-related edges (preserve auto-ring edges)
+  cy.edges().forEach(e => { if (e.data('type') !== 'auto-ring') e.remove(); });
   prevPlayingNodes = [];
 
   const ball = cy.getElementById('__ball__');
   if (ball.length) { ball.stop(); ball.style('opacity', 0); }
 
+  // Remove only notes nodes (preserve auto nodes and auto balls)
   cy.nodes().forEach(node => {
-    if (node.id() === '__ball__') return;
-    if (activeIds.has(node.id())) {
+    const id = node.id();
+    if (id === '__ball__') return;
+    if (id.startsWith('auto-') || id.startsWith('__auto-')) return;
+    if (activeIds.has(id)) {
       node.removeClass('playing');
     } else {
       node.remove();
@@ -588,8 +838,6 @@ function updateGraph() {
     });
   });
 
-  if (activeIds.size === 0) return;
-
   const stackEdges = [];
   chordGroups.forEach(({ nodeIds }, step) => {
     for (let i = 0; i < nodeIds.length - 1; i++) {
@@ -612,8 +860,11 @@ function updateGraph() {
     });
   }
 
-  cy.add([...stackEdges, ...seqEdges]);
-  positionNodes();
+  if (stackEdges.length || seqEdges.length) {
+    cy.add([...stackEdges, ...seqEdges]);
+  }
+  positionAllRings();
+  updateAutoBarNoteIndicators();
 }
 
 function updateGraphPlayhead(step, nextGridStep) {
@@ -659,6 +910,393 @@ function updateGraphPlayhead(step, nextGridStep) {
 }
 
 // ═══════════════════════════════════════════════════════════
+// D. AUTOMATION SEQUENCING
+// ═══════════════════════════════════════════════════════════
+
+function normalizeAutoValue(paramId, val) {
+  const cfg = AUTO_PARAMS.find(p => p.id === paramId);
+  return (val - cfg.min) / (cfg.max - cfg.min);
+}
+
+function denormalizeAutoValue(paramId, norm) {
+  const cfg = AUTO_PARAMS.find(p => p.id === paramId);
+  const val = cfg.min + norm * (cfg.max - cfg.min);
+  return Math.max(cfg.min, Math.min(cfg.max, val));
+}
+
+function enterSeqMode(paramId) {
+  const cfg = AUTO_PARAMS.find(p => p.id === paramId);
+  if (!cfg) return;
+
+  // Lazy init: fill with current slider value if not yet created
+  if (!autoSeqs[paramId]) {
+    const slider = document.getElementById(paramId);
+    const currentVal = slider ? parseFloat(slider.value) : cfg.default;
+    autoSeqs[paramId] = new Float64Array(16).fill(currentVal);
+  }
+
+  autoActive.add(paramId);
+
+  // Freeze slider
+  const slider = document.getElementById(paramId);
+  if (slider) slider.disabled = true;
+  const group = slider && slider.closest('.adsr-group');
+  if (group) {
+    const lbl = group.querySelector('label');
+    const val = group.querySelector('.adsr-val');
+    if (lbl) lbl.classList.add('seq-frozen');
+    if (val) val.classList.add('seq-frozen');
+  }
+
+  // Mark SEQ button active
+  const btn = document.querySelector(`.seq-toggle-btn[data-param="${paramId}"]`);
+  if (btn) {
+    btn.classList.add('active');
+    btn.style.setProperty('--param-color', cfg.color);
+  }
+
+  addTab(paramId, cfg);
+  buildAutoSeqPanel(paramId);
+
+  // Add per-param ball to main cy
+  if (cy) {
+    cy.add({
+      data: { id: `__auto-ball-${paramId}__`, color: cfg.color },
+      classes: 'auto-ball',
+      position: { x: 0, y: 0 },
+    });
+  }
+
+  rebuildAutoGraph(paramId); // adds nodes + calls positionAllRings()
+  switchTab(paramId);
+}
+
+function exitSeqMode(paramId) {
+  autoActive.delete(paramId);
+
+  // Re-enable slider
+  const slider = document.getElementById(paramId);
+  if (slider) slider.disabled = false;
+  const group = slider && slider.closest('.adsr-group');
+  if (group) {
+    const lbl = group.querySelector('label');
+    const val = group.querySelector('.adsr-val');
+    if (lbl) lbl.classList.remove('seq-frozen');
+    if (val) val.classList.remove('seq-frozen');
+  }
+
+  // Deactivate SEQ button
+  const btn = document.querySelector(`.seq-toggle-btn[data-param="${paramId}"]`);
+  if (btn) btn.classList.remove('active');
+
+  removeTab(paramId);
+  const panel = document.getElementById(`auto-seq-${paramId}`);
+  if (panel) panel.remove();
+
+  // Remove auto nodes, edges, and ball from main cy
+  if (cy) {
+    for (let s = 0; s < 16; s++) cy.getElementById(`auto-${paramId}-${s}`).remove();
+    cy.edges().forEach(e => { if (e.id().startsWith(`auto-edge-${paramId}-`)) e.remove(); });
+    cy.getElementById(`__auto-ball-${paramId}__`).remove();
+    cy.getElementById(`__auto-center-${paramId}__`).remove();
+  }
+  delete prevAutoPlayingNode[paramId];
+  positionAllRings();
+
+  if (autoActive.size === 0) {
+    switchTab('notes');
+  } else if (activeTab === paramId) {
+    switchTab([...autoActive][0]);
+  }
+}
+
+function addTab(paramId, cfg) {
+  const tabs = document.getElementById('seq-tabs');
+  if (tabs.querySelector(`.seq-tab[data-tab="${paramId}"]`)) return;
+  const btn = document.createElement('button');
+  btn.className = 'seq-tab';
+  btn.dataset.tab = paramId;
+  btn.style.setProperty('--tab-color', cfg.color);
+  btn.textContent = cfg.label;
+  btn.addEventListener('click', () => switchTab(paramId));
+  tabs.appendChild(btn);
+}
+
+function removeTab(paramId) {
+  const btn = document.querySelector(`.seq-tab[data-tab="${paramId}"]`);
+  if (btn) btn.remove();
+}
+
+function switchTab(tabId) {
+  activeTab = tabId;
+
+  // Update tab active states
+  document.querySelectorAll('.seq-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tabId);
+  });
+
+  const pianoRoll = document.getElementById('piano-roll');
+  const autoPanel = document.getElementById('auto-seq-panel');
+
+  if (tabId === 'notes') {
+    pianoRoll.style.display = '';
+    autoPanel.style.display = 'none';
+  } else {
+    pianoRoll.style.display = 'none';
+    autoPanel.style.display = 'flex';
+    // Show only the active param panel
+    autoPanel.querySelectorAll('.auto-seq-param-panel').forEach(p => {
+      p.style.display = p.id === `auto-seq-${tabId}` ? 'flex' : 'none';
+    });
+  }
+}
+
+function buildAutoSeqPanel(paramId) {
+  const cfg = AUTO_PARAMS.find(p => p.id === paramId);
+  const container = document.getElementById('auto-seq-panel');
+
+  const panel = document.createElement('div');
+  panel.id = `auto-seq-${paramId}`;
+  panel.className = 'auto-seq-param-panel';
+
+  const seq = autoSeqs[paramId];
+
+  for (let s = 0; s < 16; s++) {
+    const wrap = document.createElement('div');
+    wrap.className = 'auto-bar-wrap';
+
+    const num = document.createElement('div');
+    num.className = 'auto-bar-step-num';
+    num.textContent = s + 1;
+
+    const track = document.createElement('div');
+    track.className = 'auto-bar-track';
+    track.dataset.step = s;
+    track.style.setProperty('--bar-color', cfg.color);
+
+    const fill = document.createElement('div');
+    fill.className = 'auto-bar-fill';
+    fill.style.setProperty('--bar-color', cfg.color);
+    const norm = normalizeAutoValue(paramId, seq[s]);
+    fill.style.height = (norm * 100) + '%';
+
+    track.appendChild(fill);
+
+    const noteDot = document.createElement('div');
+    noteDot.className = 'auto-note-dot';
+
+    wrap.appendChild(track);
+    wrap.appendChild(noteDot);
+    wrap.appendChild(num);
+    panel.appendChild(wrap);
+  }
+
+  container.appendChild(panel);
+  attachAutoBarEvents(paramId, panel);
+  updateAutoBarNoteIndicators();
+}
+
+function attachAutoBarEvents(paramId, panel) {
+  let dragging = false;
+
+  panel.querySelectorAll('.auto-bar-track').forEach(track => {
+    track.addEventListener('mousedown', e => {
+      dragging = true;
+      const step = parseInt(track.dataset.step, 10);
+      setAutoBarValue(e, paramId, step, track);
+      e.preventDefault();
+    });
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    // Find track under cursor within this panel
+    const tracks = panel.querySelectorAll('.auto-bar-track');
+    for (const track of tracks) {
+      const rect = track.getBoundingClientRect();
+      if (e.clientX >= rect.left && e.clientX <= rect.right) {
+        const step = parseInt(track.dataset.step, 10);
+        setAutoBarValue(e, paramId, step, track);
+        break;
+      }
+    }
+  });
+
+  window.addEventListener('mouseup', () => { dragging = false; });
+}
+
+function setAutoBarValue(e, paramId, step, track) {
+  const rect = track.getBoundingClientRect();
+  const norm = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top) / rect.height));
+  autoSeqs[paramId][step] = denormalizeAutoValue(paramId, norm);
+
+  const fill = track.querySelector('.auto-bar-fill');
+  if (fill) fill.style.height = (norm * 100) + '%';
+
+  updateAutoGraphNode(paramId, step); // always update — graph always shows all rings
+}
+
+function rebuildAutoGraph(paramId) {
+  if (!cy) return;
+  const cfg = AUTO_PARAMS.find(p => p.id === paramId);
+  if (!cfg) return;
+
+  // Remove existing nodes/edges/label for this param (re-add fresh)
+  for (let s = 0; s < 16; s++) cy.getElementById(`auto-${paramId}-${s}`).remove();
+  cy.edges().forEach(e => { if (e.id().startsWith(`auto-edge-${paramId}-`)) e.remove(); });
+  cy.getElementById(`__auto-center-${paramId}__`).remove();
+
+  const seq = autoSeqs[paramId];
+  if (!seq) return;
+
+  const edgeColor = hexToRgba(cfg.color, 0.3);
+
+  // Add 16 ring nodes (positioned at origin; positionAllRings will fix)
+  for (let s = 0; s < 16; s++) {
+    const val  = seq[s];
+    const norm = normalizeAutoValue(paramId, val);
+    cy.add({
+      data: {
+        id: `auto-${paramId}-${s}`,
+        label: cfg.format(val),
+        color: cfg.color,
+        bgColor: blendWithDark(cfg.color, 0.12),
+        size: 28 + norm * 14,
+      },
+      classes: 'auto-node',
+      position: { x: 0, y: 0 },
+    });
+  }
+
+  // Add 16 ring edges
+  for (let s = 0; s < 16; s++) {
+    cy.add({
+      data: {
+        id: `auto-edge-${paramId}-${s}`,
+        source: `auto-${paramId}-${s}`,
+        target: `auto-${paramId}-${(s + 1) % 16}`,
+        type: 'auto-ring',
+        edgeColor,
+      },
+    });
+  }
+
+  // Add center label node (positioned by positionAllRings)
+  cy.add({
+    data: {
+      id: `__auto-center-${paramId}__`,
+      label: cfg.label,
+      dimColor: hexToRgba(cfg.color, 0.45),
+    },
+    classes: 'auto-ring-label',
+    position: { x: 0, y: 0 },
+  });
+
+  prevAutoPlayingNode[paramId] = null;
+  positionAllRings();
+}
+
+function hexToRgba(hex, alpha) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+/** Simple hex color blend with dark background #08080f */
+function blendWithDark(hexColor, alpha) {
+  try {
+    const r = parseInt(hexColor.slice(1, 3), 16);
+    const g = parseInt(hexColor.slice(3, 5), 16);
+    const b = parseInt(hexColor.slice(5, 7), 16);
+    const br = 8, bg = 8, bb = 15; // #08080f
+    const rr = Math.round(r * alpha + br * (1 - alpha));
+    const rg = Math.round(g * alpha + bg * (1 - alpha));
+    const rb = Math.round(b * alpha + bb * (1 - alpha));
+    return `#${rr.toString(16).padStart(2,'0')}${rg.toString(16).padStart(2,'0')}${rb.toString(16).padStart(2,'0')}`;
+  } catch (_) { return '#08080f'; }
+}
+
+function updateAutoGraphNode(paramId, step) {
+  if (!cy) return;
+  const cfg = AUTO_PARAMS.find(p => p.id === paramId);
+  if (!cfg) return;
+  const node = cy.getElementById(`auto-${paramId}-${step}`);
+  if (!node.length) return;
+  const val  = autoSeqs[paramId][step];
+  const norm = normalizeAutoValue(paramId, val);
+  node.data('label', cfg.format(val));
+  node.data('size', 28 + norm * 14);
+}
+
+function updateAutoGraphPlayhead(paramId, step, nextStep) {
+  if (!cy) return;
+
+  // Un-highlight previous node for this param
+  if (prevAutoPlayingNode[paramId]) {
+    prevAutoPlayingNode[paramId].removeClass('auto-playing');
+    prevAutoPlayingNode[paramId] = null;
+  }
+
+  const curNode = cy.getElementById(`auto-${paramId}-${step}`);
+  if (curNode.length) {
+    curNode.addClass('auto-playing');
+    prevAutoPlayingNode[paramId] = curNode;
+  }
+
+  // Animate per-param ball
+  const ball    = cy.getElementById(`__auto-ball-${paramId}__`);
+  if (!ball.length) return;
+  const srcNode = cy.getElementById(`auto-${paramId}-${step}`);
+  const tgtNode = cy.getElementById(`auto-${paramId}-${nextStep}`);
+  if (!srcNode.length || !tgtNode.length) return;
+
+  const stepMs = (60 / Tone.Transport.bpm.value / 4) * 1000;
+  ball.stop();
+  ball.position(srcNode.position());
+  ball.style('opacity', 1);
+  ball.animate({ position: tgtNode.position(), duration: stepMs, easing: 'linear' });
+}
+
+/** Show a teal dot on every auto bar column that has an active note. */
+function updateAutoBarNoteIndicators() {
+  document.querySelectorAll('.auto-bar-wrap').forEach(wrap => {
+    const track = wrap.querySelector('.auto-bar-track');
+    if (!track) return;
+    const step = parseInt(track.dataset.step, 10);
+    let hasNote = false;
+    for (let r = 0; r < NUM_ROWS; r++) {
+      if (grid[r][step]) { hasNote = true; break; }
+    }
+    wrap.classList.toggle('has-note', hasNote);
+  });
+}
+
+function highlightAutoBarPlayhead(step) {
+  if (activeTab === 'notes') return;
+  const panel = document.getElementById(`auto-seq-${activeTab}`);
+  if (!panel) return;
+  panel.querySelectorAll('.auto-bar-track').forEach(el => el.classList.remove('playhead'));
+  const track = panel.querySelector(`.auto-bar-track[data-step="${step}"]`);
+  if (track) track.classList.add('playhead');
+}
+
+function initAutoParams() {
+  // Wire SEQ toggle buttons
+  document.querySelectorAll('.seq-toggle-btn').forEach(btn => {
+    const paramId = btn.dataset.param;
+    btn.addEventListener('click', () => {
+      if (autoActive.has(paramId)) exitSeqMode(paramId);
+      else enterSeqMode(paramId);
+    });
+  });
+
+  // Wire Notes tab
+  const notesTab = document.querySelector('.seq-tab[data-tab="notes"]');
+  if (notesTab) notesTab.addEventListener('click', () => switchTab('notes'));
+}
+
+// ═══════════════════════════════════════════════════════════
 // INITIALIZATION
 // ═══════════════════════════════════════════════════════════
 
@@ -666,11 +1304,16 @@ document.addEventListener('DOMContentLoaded', () => {
   buildPianoRoll();
   initSynth();
   initGraph();
+  initAutoParams();
 
   document.getElementById('play-btn').addEventListener('click', play);
   document.getElementById('stop-btn').addEventListener('click', stop);
   document.getElementById('clear-btn').addEventListener('click', clearAll);
-  document.getElementById('random-btn').addEventListener('click', randomSeq);
+  document.getElementById('seq-clear-btn').addEventListener('click', clearCurrentSeq);
+  document.getElementById('random-btn').addEventListener('click', () => {
+    if (activeTab === 'notes') randomSeq();
+    else randomizeAutoSeq(activeTab);
+  });
   document.getElementById('fit-btn').addEventListener('click', fitGraph);
 
   const settingsToggle = document.getElementById('settings-toggle');
@@ -693,7 +1336,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  makeCollapseToggle('seq-toggle',   'piano-roll');
+  makeCollapseToggle('seq-toggle',   'seq-body');
   makeCollapseToggle('graph-toggle', 'graph-wrap', fitGraph);
 
   let resizeTimer = null;

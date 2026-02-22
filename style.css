@@ -601,6 +601,161 @@ h1 {
   box-shadow: 0 0 10px rgba(255, 204, 0, 0.5);
 }
 
+/* ── SEQ toggle button ─────────────────────────────────── */
+.seq-toggle-btn {
+  padding: 2px 6px;
+  background: #1c1c38;
+  color: #444;
+  border: 1px solid #2a2a4a;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 0.65rem;
+  font-family: monospace;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.seq-toggle-btn:hover { border-color: #00d4aa44; color: #888; }
+.seq-toggle-btn.active {
+  background: color-mix(in srgb, var(--param-color) 15%, transparent);
+  border-color: var(--param-color);
+  color: var(--param-color);
+}
+/* Frozen live slider */
+.adsr-group input[type="range"]:disabled {
+  opacity: 0.25;
+  pointer-events: none;
+}
+.adsr-group label.seq-frozen { opacity: 0.35; }
+.adsr-val.seq-frozen          { opacity: 0.35; }
+
+/* ── Sequence tabs ─────────────────────────────────────── */
+.seq-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: 1;
+}
+.seq-tabs::-webkit-scrollbar { display: none; }
+.seq-tab {
+  padding: 3px 11px;
+  background: transparent;
+  color: #444;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-family: inherit;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  transition: color 0.12s, border-color 0.12s;
+}
+.seq-tab:hover { color: #888; }
+.seq-tab.active {
+  color: var(--tab-color, #00d4aa);
+  border-bottom-color: var(--tab-color, #00d4aa);
+}
+
+/* ── Auto step sequencer panel ─────────────────────────── */
+#seq-body {
+  display: flex;
+  flex-direction: column;
+}
+#auto-seq-panel {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 3px;
+  padding: 8px 16px;
+  background: #0d0d1a;
+  height: 120px;
+  box-sizing: border-box;
+}
+.auto-seq-param-panel {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 3px;
+  width: 100%;
+  height: 100%;
+}
+.auto-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  flex: 1;
+  height: 100%;
+}
+.auto-bar-step-num {
+  font-size: 8px;
+  font-family: monospace;
+  color: #3a3a58;
+  user-select: none;
+  flex-shrink: 0;
+}
+.auto-bar-track {
+  flex: 1;
+  width: 100%;
+  position: relative;
+  background: #191929;
+  border-radius: 3px;
+  border: 1px solid #1e1e38;
+  cursor: ns-resize;
+  overflow: hidden;
+  user-select: none;
+  transition: border-color 0.07s;
+}
+.auto-bar-track:hover { border-color: #2a2a4a; }
+.auto-bar-fill {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: var(--bar-color);
+  opacity: 0.72;
+  border-radius: 2px 2px 0 0;
+  pointer-events: none;
+}
+.auto-bar-track.playhead {
+  border-color: #ffcc00;
+  box-shadow: 0 0 6px rgba(255,204,0,0.35);
+}
+.auto-bar-track.playhead .auto-bar-fill { opacity: 1; }
+
+/* Note-step indicator dot below bar track */
+.auto-note-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #00d4aa;
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity 0.1s;
+}
+.auto-bar-wrap.has-note .auto-note-dot { opacity: 0.85; }
+.auto-bar-wrap.has-note .auto-bar-step-num { color: #00d4aa; }
+
+/* ── Seq section contextual action button ──────────────── */
+.seq-action-btn {
+  padding: 2px 7px;
+  background: none;
+  color: #444;
+  border: 1px solid #1a1a30;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-family: inherit;
+  margin-left: 6px;
+  flex-shrink: 0;
+  transition: color 0.12s, border-color 0.12s;
+}
+.seq-action-btn:hover { color: #c06060; border-color: #5a2a2a; }
+
 /* ─── Graph ───────────────────────────────────── */
 
 #graph-wrap {
