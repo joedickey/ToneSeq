@@ -147,6 +147,12 @@ let loop       = null;
 let cy         = null;
 let isPlaying  = false;
 
+// Metronome
+let metronomeEnabled = false;
+let metronomeLoop    = null;
+let metronomeSynth   = null;
+let metronomeBeat    = 0;
+
 let prevPlayingNodes = [];
 
 // Automation sequencing state
@@ -285,16 +291,14 @@ function buildLoop() {
     });
 
     // Drum step computation and triggering
-    let drumStep, nextDrumStep, drumNextSearchIdx;
+    let drumStep, drumNextSearchIdx;
     if (drumPlaybackMode === 'link') {
       drumStep = step;
-      nextDrumStep = nextGridStep;
       drumSeqPosition = nextPos;
       drumNextSearchIdx = nextPos; // position in activeStepArray
     } else {
       drumStep = drumSeqPosition;
       const nextDrumPos = (drumSeqPosition + 1) % STEPS;
-      nextDrumStep = nextDrumPos;
       drumNextSearchIdx = nextDrumPos; // position in [0..15] forward array (equals step value)
       drumSeqPosition = nextDrumPos;
     }
@@ -348,6 +352,37 @@ function initSynth() {
   buildLoop();
 }
 
+// ─── Metronome ──────────────────────────────────────────────
+
+function initMetronome() {
+  // Short triangle burst — accented downbeat (beat 1) + quieter off-beats
+  metronomeSynth = new Tone.Synth({
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.005 },
+    volume: -8,
+  }).connect(masterVol);
+}
+
+function startMetronomeLoop() {
+  if (metronomeLoop !== null) { Tone.Transport.clear(metronomeLoop); metronomeLoop = null; }
+  metronomeBeat = 0;
+  metronomeLoop = Tone.Transport.scheduleRepeat((time) => {
+    const isDown = metronomeBeat === 0;
+    metronomeSynth.triggerAttackRelease(isDown ? 'B5' : 'E5', 0.03, time, isDown ? 0.75 : 0.45);
+    metronomeBeat = (metronomeBeat + 1) % 4;
+  }, '4n');
+}
+
+function toggleMetronome() {
+  metronomeEnabled = !metronomeEnabled;
+  document.getElementById('metro-btn').classList.toggle('active', metronomeEnabled);
+  if (metronomeEnabled) {
+    startMetronomeLoop();
+  } else {
+    if (metronomeLoop !== null) { Tone.Transport.clear(metronomeLoop); metronomeLoop = null; }
+  }
+}
+
 /** Switch playback mode. If playing, queues the change for the next loop boundary. */
 function setPlaybackMode(mode) {
   if (isPlaying) {
@@ -369,6 +404,8 @@ async function play() {
   if (isPlaying) return;
   await Tone.start();
   Tone.Transport.bpm.value = Number(document.getElementById('bpm').value) || 120;
+  // Restart metronome loop so beat 1 always lands on the first tick of playback
+  if (metronomeEnabled) startMetronomeLoop();
   Tone.Transport.start();
   isPlaying = true;
 }
@@ -379,6 +416,7 @@ function stop() {
   isPlaying = false;
   seqPosition = 0;
   prevStep = -1;
+  metronomeBeat = 0;
   if (pendingPlaybackMode !== null) {
     playbackMode = pendingPlaybackMode;
     pendingPlaybackMode = null;
@@ -1824,8 +1862,10 @@ document.addEventListener('DOMContentLoaded', () => {
   initGraph();
   initAutoParams();
   initDrumSection();
+  initMetronome();
 
   document.getElementById('play-btn').addEventListener('click', play);
+  document.getElementById('metro-btn').addEventListener('click', toggleMetronome);
   document.getElementById('stop-btn').addEventListener('click', stop);
   document.getElementById('clear-btn').addEventListener('click', clearAll);
   document.getElementById('seq-clear-btn').addEventListener('click', clearCurrentSeq);

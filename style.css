@@ -434,6 +434,31 @@ h1 {
   color: #00d4aa;
 }
 
+/* Metronome */
+
+.metro-btn {
+  padding: 5px 10px;
+  background: #1c1c38;
+  color: #777;
+  border: 1px solid #3a3a5a;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-family: inherit;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+
+.metro-btn::before { content: '○ '; }
+.metro-btn.active::before { content: '● '; }
+
+.metro-btn:hover { border-color: #00d4aa88; color: #aaa; }
+
+.metro-btn.active {
+  background: #00d4aa1a;
+  border-color: #00d4aa;
+  color: #00d4aa;
+}
+
 /* Settings toggle */
 
 #settings-panel {
