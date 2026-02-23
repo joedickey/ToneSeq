@@ -413,6 +413,8 @@ function initSynth() {
     drumTrackVolume[r] = 1.0;
     drumTrackGain[r].connect(drumBus.input);
   }
+  // Kick (row 5): compensate for bus trim so kick is at 0 dB (1/0.944 ≈ 1.059)
+  drumTrackGain[5].gain.value = 1 / 0.944;
 
   buildLoop();
 }
