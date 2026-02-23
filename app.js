@@ -170,6 +170,8 @@ let activeTab = 'notes';          // 'notes' | paramId
 const prevAutoPlayingNode = {};   // paramId → cy node | null
 let reverbDecayAutoTimer = null;
 
+let cellDragState = null; // { type: 'notes'|'drums', activating: bool } — drag-to-paint state
+
 let playbackMode        = 'forward';  // 'forward' | 'reverse' | 'pingpong'
 let pendingPlaybackMode = null;
 let activeStepArray     = [];
@@ -209,7 +211,7 @@ function buildPianoRoll() {
       cell.className = 'step-cell';
       cell.dataset.row  = r;
       cell.dataset.step = s;
-      cell.addEventListener('click', () => onCellClick(r, s, cell));
+      cell.addEventListener('pointerdown', (e) => startCellDrag('notes', r, s, cell, e));
       container.appendChild(cell);
     }
   }
@@ -219,6 +221,28 @@ function onCellClick(row, step, cell) {
   grid[row][step] = !grid[row][step];
   cell.classList.toggle('active', grid[row][step]);
   updateGraph();
+}
+
+// ─── Drag-to-paint for step cells and drum cells ─────────────────────────────
+
+/** Apply a paint state to a single cell without triggering a graph rebuild. */
+function applyCell(type, r, s, cell, activating) {
+  if (type === 'notes') {
+    if (grid[r][s] === activating) return;
+    grid[r][s] = activating;
+    cell.classList.toggle('active', activating);
+  } else {
+    if (drumGrid[r][s] === activating) return;
+    drumGrid[r][s] = activating;
+    cell.classList.toggle('active', activating);
+  }
+}
+
+function startCellDrag(type, r, s, cell, e) {
+  e.preventDefault();
+  const activating = type === 'notes' ? !grid[r][s] : !drumGrid[r][s];
+  cellDragState = { type, activating };
+  applyCell(type, r, s, cell, activating);
 }
 
 /** Update only the label text after root/octave change — no DOM rebuild needed. */
@@ -823,7 +847,7 @@ function buildDrumRoll() {
       cell.className = 'drum-cell';
       cell.dataset.row  = r;
       cell.dataset.step = s;
-      cell.addEventListener('click', () => onDrumCellClick(r, s, cell));
+      cell.addEventListener('pointerdown', (e) => startCellDrag('drums', r, s, cell, e));
       container.appendChild(cell);
     }
 
@@ -1975,6 +1999,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Warm up AudioContext on first interaction so it's ready before Play is pressed
   document.addEventListener('pointerdown', async () => { await Tone.start(); }, { once: true });
+
+  // Drag-to-paint: track pointer across step/drum cells and paint them all
+  document.addEventListener('pointermove', (e) => {
+    if (!cellDragState) return;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    if (!el) return;
+    if (cellDragState.type === 'notes' && el.classList.contains('step-cell')) {
+      const r = parseInt(el.dataset.row), s = parseInt(el.dataset.step);
+      if (!isNaN(r) && !isNaN(s)) applyCell('notes', r, s, el, cellDragState.activating);
+    } else if (cellDragState.type === 'drums' && el.classList.contains('drum-cell')) {
+      const r = parseInt(el.dataset.row), s = parseInt(el.dataset.step);
+      if (!isNaN(r) && !isNaN(s)) applyCell('drums', r, s, el, cellDragState.activating);
+    }
+  });
+  // Rebuild graph once when the drag ends (avoids repeated rebuilds mid-drag)
+  document.addEventListener('pointerup', () => {
+    if (!cellDragState) return;
+    if (cellDragState.type === 'notes') updateGraph();
+    else updateDrumGraph();
+    cellDragState = null;
+  });
 
   document.getElementById('play-btn').addEventListener('click', play);
   document.getElementById('metro-btn').addEventListener('click', toggleMetronome);

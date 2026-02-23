@@ -556,6 +556,7 @@ h1 {
   padding: 12px 62px 8px 16px; /* right=62px matches drum-roll's 44px mute col + 2px gap + 16px padding */
   background: #0d0d1a;
   flex-shrink: 0;
+  touch-action: none; /* allow pointer-drag-to-paint without triggering scroll */
 }
 
 .pr-label {
@@ -626,6 +627,7 @@ h1 {
   grid-template-rows: 22px repeat(6, 30px);
   gap: 2px;
   flex: 1;
+  touch-action: none;
 }
 
 #drum-mute-col {
