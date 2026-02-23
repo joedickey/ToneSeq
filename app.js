@@ -400,16 +400,17 @@ function initSynth() {
   masterVol.toDestination();
 
   // Drum bus: raw AudioBufferSourceNodes connect here → masterVol → destination.
-  // drumBus.input is the native GainNode in Tone.js v14, which raw nodes can connect to.
-  drumBus = new Tone.Gain(1);
+  // Fixed −3 dB trim on the bus so samples sit 3 dB below full-scale by default
+  // while per-track faders still default to 1.0 (max).
+  drumBus = new Tone.Gain(0.708); // 0.708 = 10^(−3/20) = −3 dB
   drumBus.connect(masterVol);
 
-  // Per-track gain nodes: src → drumTrackGain[r] → drumBus → masterVol
+  // Per-track gain nodes (faders): src → drumTrackGain[r] → drumBus → masterVol
   const rawCtxInit = Tone.getContext().rawContext;
   for (let r = 0; r < NUM_DRUM_ROWS; r++) {
     drumTrackGain[r] = rawCtxInit.createGain();
-    drumTrackGain[r].gain.value = 0.708; // −3 dB default (10^(−3/20))
-    drumTrackVolume[r] = 0.708;
+    drumTrackGain[r].gain.value = 1.0;
+    drumTrackVolume[r] = 1.0;
     drumTrackGain[r].connect(drumBus.input);
   }
 
