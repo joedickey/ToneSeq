@@ -160,6 +160,7 @@ let playbackMode        = 'forward';  // 'forward' | 'reverse' | 'pingpong'
 let pendingPlaybackMode = null;
 let activeStepArray     = [];
 let seqPosition         = 0;
+let prevStep            = -1;  // for ping-pong: detect duplicate turnaround steps
 
 // ═══════════════════════════════════════════════════════════
 // A. PIANO ROLL
@@ -244,6 +245,7 @@ function buildLoop() {
   if (loop !== null) { Tone.Transport.clear(loop); loop = null; }
   activeStepArray = getStepArray(playbackMode);
   seqPosition = 0;
+  prevStep = -1;
 
   loop = Tone.Transport.scheduleRepeat((time) => {
     // At the start of each new pass, apply any queued mode change
@@ -251,11 +253,16 @@ function buildLoop() {
       playbackMode = pendingPlaybackMode;
       pendingPlaybackMode = null;
       activeStepArray = getStepArray(playbackMode);
+      prevStep = -1; // reset so first step of new mode is never treated as a duplicate
     }
 
     const step = activeStepArray[seqPosition];
     const nextPos = (seqPosition + 1) % activeStepArray.length;
     const nextGridStep = activeStepArray[nextPos];
+    // Detect ping-pong turnaround: step fires twice in a row only at direction-switch points.
+    // Skip audio re-triggers on the duplicate tick to avoid envelope-restart clicks.
+    const isDuplicate = (step === prevStep);
+    prevStep = step;
     seqPosition = nextPos;
 
     // Collect active notes for this step using current NOTES mapping
@@ -263,7 +270,7 @@ function buildLoop() {
     for (let r = 0; r < NUM_ROWS; r++) {
       if (grid[r][step]) activeNotes.push(NOTES[r]);
     }
-    if (activeNotes.length > 0) {
+    if (activeNotes.length > 0 && !isDuplicate) {
       // Equal-power polyphony compensation: 1/√n velocity per voice
       const velocity = 1 / Math.sqrt(activeNotes.length);
       synth.triggerAttackRelease(activeNotes, '16n', time, velocity);
@@ -278,32 +285,39 @@ function buildLoop() {
     });
 
     // Drum step computation and triggering
-    let drumStep, nextDrumStep;
+    let drumStep, nextDrumStep, drumNextSearchIdx;
     if (drumPlaybackMode === 'link') {
-      drumStep     = step;
+      drumStep = step;
       nextDrumStep = nextGridStep;
       drumSeqPosition = nextPos;
+      drumNextSearchIdx = nextPos; // position in activeStepArray
     } else {
       drumStep = drumSeqPosition;
       const nextDrumPos = (drumSeqPosition + 1) % STEPS;
       nextDrumStep = nextDrumPos;
+      drumNextSearchIdx = nextDrumPos; // position in [0..15] forward array (equals step value)
       drumSeqPosition = nextDrumPos;
     }
-    for (let r = 0; r < NUM_DRUM_ROWS; r++) {
-      if (!drumMuted[r] && drumGrid[r][drumStep]) {
-        const p = drumPlayers[r];
-        if (p && p.loaded) { p.stop(time); p.start(time); }
+    // In link mode, drums follow the synth step — skip on duplicate to avoid sample click
+    const skipDrumTrigger = isDuplicate && drumPlaybackMode === 'link';
+    if (!skipDrumTrigger) {
+      for (let r = 0; r < NUM_DRUM_ROWS; r++) {
+        if (!drumMuted[r] && drumGrid[r][drumStep]) {
+          const p = drumPlayers[r];
+          if (p && p.loaded) { p.stop(time); p.start(time); }
+        }
       }
     }
 
     scheduleVisual(() => {
       highlightPlayhead(step);
-      updateGraphPlayhead(step, nextGridStep);
+      // Pass nextPos (array position) so reverse-phase dist is calculated correctly
+      updateGraphPlayhead(step, nextPos);
       highlightAutoBarPlayhead(step);
-      // Update all active auto params — each has its own ring in cy
+      // Auto graph uses step values directly (no indexOf needed — nodes indexed 0-15)
       autoActive.forEach(paramId => updateAutoGraphPlayhead(paramId, step, nextGridStep));
       highlightDrumPlayhead(drumStep);
-      updateDrumGraphPlayhead(drumStep, nextDrumStep);
+      updateDrumGraphPlayhead(drumStep, drumNextSearchIdx);
     }, time);
   }, '16n');
 }
@@ -364,6 +378,7 @@ function stop() {
   Tone.Transport.stop();
   isPlaying = false;
   seqPosition = 0;
+  prevStep = -1;
   if (pendingPlaybackMode !== null) {
     playbackMode = pendingPlaybackMode;
     pendingPlaybackMode = null;
@@ -893,7 +908,7 @@ function updateDrumGraph() {
   positionAllRings();
 }
 
-function updateDrumGraphPlayhead(drumStep, nextDrumStep) {
+function updateDrumGraphPlayhead(drumStep, nextSearchIdx) {
   if (!cy) return;
 
   prevDrumPlayingNodes.forEach(n => n.removeClass('drum-playing'));
@@ -912,13 +927,14 @@ function updateDrumGraphPlayhead(drumStep, nextDrumStep) {
   const srcGroup = drumChordGroups.get(drumStep);
   if (!srcGroup) return;
 
+  // link: nextSearchIdx is the synth's nextPos (index into activeStepArray, handles ping-pong)
+  // forward: nextSearchIdx is the drum's next step value (0-15, index = value in [0..15])
   const searchArray = drumPlaybackMode === 'link' ? activeStepArray : [...Array(STEPS).keys()];
   const sn = searchArray.length;
-  const seqPos = searchArray.indexOf(nextDrumStep);
   let tgtGroup = null;
   let dist = 1;
   for (let i = 0; i < sn; i++) {
-    const gs = searchArray[(seqPos + i) % sn];
+    const gs = searchArray[(nextSearchIdx + i) % sn];
     if (drumChordGroups.has(gs)) { tgtGroup = drumChordGroups.get(gs); dist = i + 1; break; }
   }
   if (!tgtGroup) return;
@@ -1368,7 +1384,7 @@ function updateGraph() {
   updateAutoBarNoteIndicators();
 }
 
-function updateGraphPlayhead(step, nextGridStep) {
+function updateGraphPlayhead(step, nextPos) {
   if (!cy) return;
 
   prevPlayingNodes.forEach(n => n.removeClass('playing'));
@@ -1387,12 +1403,13 @@ function updateGraphPlayhead(step, nextGridStep) {
   const srcGroup = chordGroups.get(step);
   if (!srcGroup) return;
 
+  // Use nextPos (index into activeStepArray) so the search follows the actual play
+  // direction in all modes (forward, reverse, ping-pong).
   const n = activeStepArray.length;
-  const seqPos = activeStepArray.indexOf(nextGridStep);
   let tgtGroup = null;
   let dist = 1;
   for (let i = 0; i < n; i++) {
-    const gs = activeStepArray[(seqPos + i) % n];
+    const gs = activeStepArray[(nextPos + i) % n];
     if (chordGroups.has(gs)) { tgtGroup = chordGroups.get(gs); dist = i + 1; break; }
   }
   if (!tgtGroup) return;
