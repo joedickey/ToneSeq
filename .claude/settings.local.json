@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch"
+      "WebSearch",
+      "Bash(git remote set-url origin git@github.com:joedickey/webseq.git && ssh -T git@github.com 2>&1)"
     ]
   }
 }
