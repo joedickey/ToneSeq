@@ -942,6 +942,36 @@ h1 {
   background: #ff6b6b1a;
 }
 
+/* Save-new "+" button */
+.seq-action-btn.save-new-btn {
+  color: #00d4aa88;
+  border-color: #00d4aa33;
+  font-weight: 700;
+  font-size: 0.85rem;
+  padding: 1px 8px;
+}
+.seq-action-btn.save-new-btn:hover {
+  color: #00d4aa;
+  border-color: #00d4aa;
+  background: #00d4aa1a;
+}
+#drum-save-new-btn {
+  color: #ff6b6b88;
+  border-color: #ff6b6b33;
+}
+#drum-save-new-btn:hover {
+  color: #ff6b6b;
+  border-color: #ff6b6b;
+  background: #ff6b6b1a;
+}
+.seq-action-btn.save-new-btn:disabled {
+  color: #333;
+  border-color: #1a1a30;
+  cursor: not-allowed;
+  opacity: 0.4;
+  background: none;
+}
+
 /* ── Pattern rename inline input ──────────────── */
 .pattern-rename-input {
   width: 100px;

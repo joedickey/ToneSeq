@@ -187,6 +187,10 @@ let pendingNotesSwitch   = null; // queued pattern ID, applied at loop boundary
 let pendingDrumSwitch    = null;
 let notesNameCounter     = 0;    // for auto-naming: A, B, C, ...
 let drumNameCounter      = 0;
+const MAX_NOTES_PATTERNS = 6;
+const MAX_DRUM_PATTERNS  = 6;
+let deleteConfirmId      = null; // pattern ID awaiting delete confirmation
+let deleteConfirmTimer   = null; // 2s timeout for delete confirm
 
 // ═══════════════════════════════════════════════════════════
 // PATTERN BANK — snapshot / restore / thumbnail
@@ -215,7 +219,6 @@ function snapshotNotesPattern() {
   const adsrDEl   = document.getElementById('adsr-d');
   const adsrSEl   = document.getElementById('adsr-s');
   const adsrREl   = document.getElementById('adsr-r');
-  const selWave   = document.querySelector('.waveform-btn.selected');
   const selFilter = document.querySelector('.filter-type-btn.selected');
 
   return {
@@ -234,7 +237,6 @@ function snapshotNotesPattern() {
       decay:   parseFloat(adsrDEl.value),
       sustain: parseFloat(adsrSEl.value),
       release: parseFloat(adsrREl.value),
-      waveform: selWave ? selWave.dataset.wave : 'sine',
     },
   };
 }
@@ -296,12 +298,6 @@ function restoreNotesPattern(pattern) {
   setSliderAndAudio('adsr-d',    sv.decay,    v => setEnvelope('decay', v));
   setSliderAndAudio('adsr-s',    sv.sustain,  v => setEnvelope('sustain', v));
   setSliderAndAudio('adsr-r',    sv.release,  v => setEnvelope('release', v));
-
-  // Waveform button
-  setWaveform(sv.waveform);
-  document.querySelectorAll('.waveform-btn').forEach(b => {
-    b.classList.toggle('selected', b.dataset.wave === sv.waveform);
-  });
 
   // Filter type button
   document.querySelectorAll('.filter-type-btn').forEach(b => {
@@ -428,12 +424,11 @@ function autoDrumName() {
   return 'Beat ' + (++drumNameCounter);
 }
 
-/** Save (or update) the current notes pattern. */
+/** Save: update active pattern in place, or create first if none. */
 function saveNotesPattern() {
   const snapshot = snapshotNotesPattern();
 
   if (activeNotesPatternId !== null) {
-    // Update existing pattern in place
     const existing = notesPatterns.find(p => p.id === activeNotesPatternId);
     if (existing) {
       Object.assign(existing, snapshot);
@@ -443,7 +438,15 @@ function saveNotesPattern() {
     }
   }
 
-  // New pattern
+  // No active pattern — create the first one
+  saveNewNotesPattern();
+}
+
+/** "+" button: always create a new pattern slot (subject to limit). */
+function saveNewNotesPattern() {
+  if (notesPatterns.length >= MAX_NOTES_PATTERNS) return;
+  const snapshot = snapshotNotesPattern();
+
   const id = crypto.randomUUID ? crypto.randomUUID() : 'np-' + Date.now() + '-' + Math.random().toString(36).slice(2);
   const pattern = {
     id,
@@ -459,7 +462,7 @@ function saveNotesPattern() {
   updateNotesCenterLabel();
 }
 
-/** Save (or update) the current drum pattern. */
+/** Save: update active drum pattern in place, or create first if none. */
 function saveDrumPattern() {
   const snapshot = snapshotDrumPattern();
 
@@ -472,6 +475,15 @@ function saveDrumPattern() {
       return;
     }
   }
+
+  // No active pattern — create the first one
+  saveNewDrumPattern();
+}
+
+/** "+" button: always create a new drum pattern slot (subject to limit). */
+function saveNewDrumPattern() {
+  if (drumPatterns.length >= MAX_DRUM_PATTERNS) return;
+  const snapshot = snapshotDrumPattern();
 
   const id = crypto.randomUUID ? crypto.randomUUID() : 'dp-' + Date.now() + '-' + Math.random().toString(36).slice(2);
   const pattern = {
@@ -508,7 +520,6 @@ function queueNotesSwitch(patternId) {
   if (patternId === activeNotesPatternId) return;
   if (!isPlaying) {
     // Immediate switch when not playing
-    if (activeNotesPatternId) updatePatternInPlace(activeNotesPatternId);
     const target = notesPatterns.find(p => p.id === patternId);
     if (target) {
       restoreNotesPattern(target);
@@ -528,7 +539,6 @@ function queueNotesSwitch(patternId) {
 function queueDrumSwitch(patternId) {
   if (patternId === activeDrumPatternId) return;
   if (!isPlaying) {
-    if (activeDrumPatternId) updatePatternInPlace(activeDrumPatternId);
     const target = drumPatterns.find(p => p.id === patternId);
     if (target) {
       restoreDrumPattern(target);
@@ -567,6 +577,53 @@ function updateDrumsCenterLabel() {
     if (pat) node.data('label', pat.name);
   } else {
     node.data('label', 'Drums');
+  }
+}
+
+/** Delete a pattern by ID. */
+function deletePattern(patternId, patternType) {
+  if (patternType === 'notes') {
+    const idx = notesPatterns.findIndex(p => p.id === patternId);
+    if (idx === -1) return;
+    notesPatterns.splice(idx, 1);
+    if (activeNotesPatternId === patternId) {
+      activeNotesPatternId = null;
+      updateNotesCenterLabel();
+    }
+    if (pendingNotesSwitch === patternId) pendingNotesSwitch = null;
+  } else {
+    const idx = drumPatterns.findIndex(p => p.id === patternId);
+    if (idx === -1) return;
+    drumPatterns.splice(idx, 1);
+    if (activeDrumPatternId === patternId) {
+      activeDrumPatternId = null;
+      updateDrumsCenterLabel();
+    }
+    if (pendingDrumSwitch === patternId) pendingDrumSwitch = null;
+  }
+  rebuildPatternThumbnails();
+}
+
+/** Clear delete-confirm state. */
+function clearDeleteConfirm() {
+  if (deleteConfirmId && cy) {
+    const node = cy.getElementById(`__pat-${deleteConfirmId}__`);
+    if (node.length) node.removeClass('pattern-delete-confirm');
+  }
+  deleteConfirmId = null;
+  clearTimeout(deleteConfirmTimer);
+  deleteConfirmTimer = null;
+}
+
+/** Enable/disable "+" buttons based on pattern count. */
+function updateSaveNewButtonState() {
+  const notesPlusBtn = document.getElementById('notes-save-new-btn');
+  if (notesPlusBtn) {
+    notesPlusBtn.disabled = notesPatterns.length >= MAX_NOTES_PATTERNS;
+  }
+  const drumPlusBtn = document.getElementById('drum-save-new-btn');
+  if (drumPlusBtn) {
+    drumPlusBtn.disabled = drumPatterns.length >= MAX_DRUM_PATTERNS;
   }
 }
 
@@ -613,6 +670,7 @@ function rebuildPatternThumbnails() {
   });
 
   positionAllRings();
+  updateSaveNewButtonState();
 }
 
 /** Start inline rename of a pattern thumbnail node. */
@@ -781,7 +839,6 @@ function buildLoop() {
 
     // Pattern switching at loop boundary
     if (seqPosition === 0 && pendingNotesSwitch !== null) {
-      if (activeNotesPatternId) updatePatternInPlace(activeNotesPatternId);
       const target = notesPatterns.find(p => p.id === pendingNotesSwitch);
       if (target) restoreNotesPattern(target);
       activeNotesPatternId = pendingNotesSwitch;
@@ -794,7 +851,6 @@ function buildLoop() {
       }, time);
     }
     if (seqPosition === 0 && pendingDrumSwitch !== null) {
-      if (activeDrumPatternId) updatePatternInPlace(activeDrumPatternId);
       const target = drumPatterns.find(p => p.id === pendingDrumSwitch);
       if (target) restoreDrumPattern(target);
       activeDrumPatternId = pendingDrumSwitch;
@@ -1008,7 +1064,6 @@ function stop() {
   }
   // Apply any pending pattern switches immediately on stop
   if (pendingNotesSwitch !== null) {
-    if (activeNotesPatternId) updatePatternInPlace(activeNotesPatternId);
     const target = notesPatterns.find(p => p.id === pendingNotesSwitch);
     if (target) { restoreNotesPattern(target); refreshNotesUI(); }
     activeNotesPatternId = pendingNotesSwitch;
@@ -1018,7 +1073,6 @@ function stop() {
     rebuildPatternThumbnails();
   }
   if (pendingDrumSwitch !== null) {
-    if (activeDrumPatternId) updatePatternInPlace(activeDrumPatternId);
     const target = drumPatterns.find(p => p.id === pendingDrumSwitch);
     if (target) { restoreDrumPattern(target); refreshDrumUI(); }
     activeDrumPatternId = pendingDrumSwitch;
@@ -1041,14 +1095,6 @@ function stop() {
   if (drumBall && drumBall.length) { drumBall.stop(); drumBall.style('opacity', 0); }
 
   document.querySelectorAll('.auto-bar-track.playhead').forEach(el => el.classList.remove('playhead'));
-  autoActive.forEach(paramId => {
-    if (prevAutoPlayingNode[paramId]) {
-      prevAutoPlayingNode[paramId].removeClass('auto-playing');
-      prevAutoPlayingNode[paramId] = null;
-    }
-    const autoBall = cy && cy.getElementById(`__auto-ball-${paramId}__`);
-    if (autoBall && autoBall.length) { autoBall.stop(); autoBall.style('opacity', 0); }
-  });
 }
 
 function setBPM(val) {
@@ -1724,57 +1770,6 @@ function initGraph() {
         },
       },
       {
-        selector: 'node.auto-node',
-        style: {
-          'width': 'data(size)', 'height': 'data(size)',
-          'background-color': 'data(bgColor)',
-          'border-width': 1.5, 'border-color': 'data(color)',
-          'label': 'data(label)',
-          'font-size': '8px', 'font-family': 'monospace',
-          'color': 'data(color)',
-          'text-valign': 'center', 'text-halign': 'center',
-          'text-wrap': 'none',
-        },
-      },
-      {
-        selector: 'node.auto-node.auto-playing',
-        style: {
-          'border-color': '#ffcc00', 'border-width': 2.5,
-          'color': '#ffcc00',
-        },
-      },
-      {
-        selector: 'edge[type = "auto-ring"]',
-        style: {
-          'width': 1,
-          'line-color': 'data(edgeColor)',
-          'target-arrow-shape': 'none',
-          'source-arrow-shape': 'none',
-          'curve-style': 'straight',
-        },
-      },
-      {
-        selector: 'node.auto-ball',
-        style: {
-          'width': 10, 'height': 10,
-          'background-color': 'data(color)',
-          'border-width': 0,
-          'label': '', 'opacity': 0, 'z-index': 999,
-        },
-      },
-      {
-        selector: 'node.auto-ring-label',
-        style: {
-          'width': 1, 'height': 1,
-          'background-opacity': 0,
-          'border-width': 0,
-          'label': 'data(label)',
-          'font-size': '13px', 'font-weight': 700, 'font-family': 'monospace',
-          'color': 'data(dimColor)',
-          'text-valign': 'center', 'text-halign': 'center',
-        },
-      },
-      {
         selector: 'node.drum-node',
         style: {
           'width': 30, 'height': 30,
@@ -1843,7 +1838,7 @@ function initGraph() {
       {
         selector: 'node.pattern-thumb',
         style: {
-          'width': 70, 'height': 70,
+          'width': 80, 'height': 80,
           'background-image': 'data(thumbnail)',
           'background-fit': 'cover',
           'background-color': '#0d0d1a',
@@ -1873,6 +1868,14 @@ function initGraph() {
           'opacity': 1.0,
         },
       },
+      {
+        selector: 'node.pattern-thumb.pattern-delete-confirm',
+        style: {
+          'border-width': 3, 'border-color': '#ff4444',
+          'border-opacity': 1,
+          'opacity': 1.0,
+        },
+      },
     ],
     elements: [],
     layout: { name: 'null' },
@@ -1881,12 +1884,33 @@ function initGraph() {
   cy.add({ data: { id: '__ball__' }, classes: 'ball', position: { x: 0, y: 0 } });
   cy.add({ data: { id: '__drum-ball__' }, classes: 'drum-ball', position: { x: 0, y: 0 } });
 
-  // Pattern thumbnail click → queue switch
+  // Pattern thumbnail tap → queue switch (or confirm delete if in confirm mode)
   cy.on('tap', 'node.pattern-thumb', (e) => {
     const patternId   = e.target.data('patternId');
     const patternType = e.target.data('patternType');
+
+    // Tap during delete-confirm window → delete
+    if (deleteConfirmId === patternId) {
+      clearDeleteConfirm();
+      deletePattern(patternId, patternType);
+      return;
+    }
+
+    // Normal switch
+    clearDeleteConfirm();
     if (patternType === 'notes') queueNotesSwitch(patternId);
     else queueDrumSwitch(patternId);
+  });
+
+  // Long-press thumbnail → enter delete-confirm mode (red border, tap again to delete)
+  cy.on('taphold', 'node.pattern-thumb', (e) => {
+    const patternId = e.target.data('patternId');
+    clearDeleteConfirm();
+    deleteConfirmId = patternId;
+    e.target.addClass('pattern-delete-confirm');
+    deleteConfirmTimer = setTimeout(() => {
+      clearDeleteConfirm();
+    }, 3000);
   });
 
   // Double-tap thumbnail to rename
@@ -1967,18 +1991,13 @@ function positionAllRings() {
   const cx   = containerW / 2;
   const cy_c = containerH / 2;
 
-  const autoParamList  = [...autoActive];
-  const numAuto        = autoParamList.length;
-
   const NOTE_NODE     = 38;
-  const AUTO_NODE_MAX = 42;  // max auto node diameter (min 28, max 42)
-  const GAP           = 36;  // clear space between ring outer edges
 
-  // Notes ring radius (independent of auto rings)
+  // Notes ring radius
   const n = stepSequence.length;
   const containerMin  = Math.min(containerW, containerH);
   const noteMinR      = n > 1 ? (NOTE_NODE / 2 + 8) / Math.sin(Math.PI / n) : 0;
-  const notesR        = Math.max(noteMinR, containerMin * 0.28, 50);
+  const notesR        = Math.max(noteMinR, containerMin * 0.32, 50);
 
   // Notes ring stack outer edge
   let maxStackNodes = 1;
@@ -1991,7 +2010,7 @@ function positionAllRings() {
   const drumN        = drumStepSequence.length;
   const drumNodeSize = 30;
   const drumMinR     = drumN > 1 ? (drumNodeSize / 2 + 6) / Math.sin(Math.PI / drumN) : 0;
-  const drumR        = drumN > 0 ? Math.max(drumMinR, containerMin * 0.22, 40) : 0;
+  const drumR        = drumN > 0 ? Math.max(drumMinR, containerMin * 0.26, 40) : 0;
 
   let maxDrumStackNodes = 1;
   drumChordGroups.forEach(({ nodeIds }) => { if (nodeIds.length > maxDrumStackNodes) maxDrumStackNodes = nodeIds.length; });
@@ -1999,7 +2018,7 @@ function positionAllRings() {
 
   // Center notes + drum symmetrically around canvas center.
   // drumVertOffset = distance between the two ring centers.
-  const MIN_RING_GAP = 28;
+  const MIN_RING_GAP = 16;
   const drumVertOffset = drumN > 0
     ? notesStackOuter + MIN_RING_GAP + drumStackOuter
     : 0;
@@ -2030,36 +2049,9 @@ function positionAllRings() {
   if (notesCenter.length) notesCenter.position({ x: cx, y: notesCy });
 
   // Combined cluster outer radius from canvas center.
-  // Both rings are offset by drumVertOffset/2, so worst-case vertical reach is:
-  // drumVertOffset/2 + max(notesStackOuter, drumStackOuter).
   const clusterR = drumVertOffset / 2 + Math.max(notesStackOuter, drumStackOuter);
 
-  // Auto ring radius — minimum to fit 16 nodes at max size without overlap
-  const AUTO_R = Math.max(88, (AUTO_NODE_MAX / 2 + 5) / Math.sin(Math.PI / 16));
-
-  // Orbit must clear the combined cluster and leave room for siblings (full circle).
-  const minFromCluster  = clusterR + GAP + AUTO_R + AUTO_NODE_MAX / 2;
-  const minFromSiblings = numAuto > 1
-    ? (AUTO_R + AUTO_NODE_MAX / 2 + GAP) / Math.sin(Math.PI / numAuto)
-    : 0;
-  const orbitDist = Math.max(minFromCluster, minFromSiblings);
-
-  // Position auto rings evenly around the combined canvas center (full circle).
-  autoParamList.forEach((paramId, i) => {
-    const orbitAngle = (i / Math.max(numAuto, 1)) * 2 * Math.PI;
-    const ringCx = cx   + orbitDist * Math.cos(orbitAngle);
-    const ringCy = cy_c + orbitDist * Math.sin(orbitAngle);
-    for (let s = 0; s < 16; s++) {
-      const node = cy.getElementById(`auto-${paramId}-${s}`);
-      if (!node.length) continue;
-      const a = -Math.PI / 2 + (s / 16) * 2 * Math.PI;
-      node.position({ x: ringCx + AUTO_R * Math.cos(a), y: ringCy + AUTO_R * Math.sin(a) });
-    }
-    const centerLabel = cy.getElementById(`__auto-center-${paramId}__`);
-    if (centerLabel.length) centerLabel.position({ x: ringCx, y: ringCy });
-  });
-
-  // Position pattern thumbnail nodes in a row below the main rings
+  // Position pattern thumbnail nodes: notes on LEFT, drums on RIGHT
   const thumbNodes = cy.nodes('.pattern-thumb');
   if (thumbNodes.length > 0) {
     const noteThumbs = [];
@@ -2069,19 +2061,24 @@ function positionAllRings() {
       else drumThumbs.push(n);
     });
 
-    const thumbSpacing = 90;
-    const thumbY = cy_c + (drumN > 0 ? drumCy - cy_c : 0) + (drumN > 0 ? drumStackOuter : notesStackOuter) + 80;
+    const thumbSpacing = 84;
+    const leftX  = cx - clusterR - 55;
+    const rightX = cx + clusterR + 55;
 
-    const allThumbs = [...noteThumbs, ...drumThumbs];
-    const totalW = (allThumbs.length - 1) * thumbSpacing;
-    const startX = cx - totalW / 2;
+    // Notes thumbnails in a vertical column on the left
+    const notesStartY = cy_c - ((noteThumbs.length - 1) * thumbSpacing) / 2;
+    noteThumbs.forEach((node, i) => {
+      node.position({ x: leftX, y: notesStartY + i * thumbSpacing });
+    });
 
-    allThumbs.forEach((node, i) => {
-      node.position({ x: startX + i * thumbSpacing, y: thumbY });
+    // Drum thumbnails in a vertical column on the right
+    const drumsStartY = cy_c - ((drumThumbs.length - 1) * thumbSpacing) / 2;
+    drumThumbs.forEach((node, i) => {
+      node.position({ x: rightX, y: drumsStartY + i * thumbSpacing });
     });
   }
 
-  cy.fit(40);
+  cy.fit(20);
 }
 
 /** Legacy alias */
@@ -2098,21 +2095,20 @@ function updateGraph() {
 
   const activeIds = new Set([...chordGroups.values()].flatMap(g => g.nodeIds));
 
-  // Remove only notes-related edges (preserve auto-ring, drum-stack, drum-sequence edges)
+  // Remove only notes-related edges (preserve drum-stack, drum-sequence edges)
   cy.edges().forEach(e => {
     const t = e.data('type');
-    if (t !== 'auto-ring' && t !== 'drum-stack' && t !== 'drum-sequence') e.remove();
+    if (t !== 'drum-stack' && t !== 'drum-sequence') e.remove();
   });
   prevPlayingNodes = [];
 
   const ball = cy.getElementById('__ball__');
   if (ball.length) { ball.stop(); ball.style('opacity', 0); }
 
-  // Remove only notes nodes (preserve auto, drum nodes and balls)
+  // Remove only notes nodes (preserve drum nodes and balls)
   cy.nodes().forEach(node => {
     const id = node.id();
     if (id === '__ball__' || id === '__drum-ball__') return;
-    if (id.startsWith('auto-') || id.startsWith('__auto-')) return;
     if (id.startsWith('drum-') || id === '__drums-center__') return;
     if (id.startsWith('__pat-')) return;
     if (activeIds.has(id)) {
@@ -2277,16 +2273,6 @@ function enterSeqMode(paramId) {
   addTab(paramId, cfg);
   buildAutoSeqPanel(paramId);
 
-  // Add per-param ball to main cy
-  if (cy) {
-    cy.add({
-      data: { id: `__auto-ball-${paramId}__`, color: cfg.color },
-      classes: 'auto-ball',
-      position: { x: 0, y: 0 },
-    });
-  }
-
-  rebuildAutoGraph(paramId); // adds nodes + calls positionAllRings()
   switchTab(paramId);
 }
 
@@ -2312,15 +2298,7 @@ function exitSeqMode(paramId) {
   const panel = document.getElementById(`auto-seq-${paramId}`);
   if (panel) panel.remove();
 
-  // Remove auto nodes, edges, and ball from main cy
-  if (cy) {
-    for (let s = 0; s < 16; s++) cy.getElementById(`auto-${paramId}-${s}`).remove();
-    cy.edges().forEach(e => { if (e.id().startsWith(`auto-edge-${paramId}-`)) e.remove(); });
-    cy.getElementById(`__auto-ball-${paramId}__`).remove();
-    cy.getElementById(`__auto-center-${paramId}__`).remove();
-  }
   delete prevAutoPlayingNode[paramId];
-  positionAllRings();
 
   if (autoActive.size === 0) {
     switchTab('notes');
@@ -2455,65 +2433,7 @@ function setAutoBarValue(e, paramId, step, track) {
   updateAutoGraphNode(paramId, step); // always update — graph always shows all rings
 }
 
-function rebuildAutoGraph(paramId) {
-  if (!cy) return;
-  const cfg = AUTO_PARAMS.find(p => p.id === paramId);
-  if (!cfg) return;
-
-  // Remove existing nodes/edges/label for this param (re-add fresh)
-  for (let s = 0; s < 16; s++) cy.getElementById(`auto-${paramId}-${s}`).remove();
-  cy.edges().forEach(e => { if (e.id().startsWith(`auto-edge-${paramId}-`)) e.remove(); });
-  cy.getElementById(`__auto-center-${paramId}__`).remove();
-
-  const seq = autoSeqs[paramId];
-  if (!seq) return;
-
-  const edgeColor = hexToRgba(cfg.color, 0.3);
-
-  // Add 16 ring nodes (positioned at origin; positionAllRings will fix)
-  for (let s = 0; s < 16; s++) {
-    const val  = seq[s];
-    const norm = normalizeAutoValue(paramId, val);
-    cy.add({
-      data: {
-        id: `auto-${paramId}-${s}`,
-        label: cfg.format(val),
-        color: cfg.color,
-        bgColor: blendWithDark(cfg.color, 0.12),
-        size: 28 + norm * 14,
-      },
-      classes: 'auto-node',
-      position: { x: 0, y: 0 },
-    });
-  }
-
-  // Add 16 ring edges
-  for (let s = 0; s < 16; s++) {
-    cy.add({
-      data: {
-        id: `auto-edge-${paramId}-${s}`,
-        source: `auto-${paramId}-${s}`,
-        target: `auto-${paramId}-${(s + 1) % 16}`,
-        type: 'auto-ring',
-        edgeColor,
-      },
-    });
-  }
-
-  // Add center label node (positioned by positionAllRings)
-  cy.add({
-    data: {
-      id: `__auto-center-${paramId}__`,
-      label: cfg.label,
-      dimColor: hexToRgba(cfg.color, 0.45),
-    },
-    classes: 'auto-ring-label',
-    position: { x: 0, y: 0 },
-  });
-
-  prevAutoPlayingNode[paramId] = null;
-  positionAllRings();
-}
+function rebuildAutoGraph() { /* no-op: auto ring visualization removed */ }
 
 function hexToRgba(hex, alpha) {
   const r = parseInt(hex.slice(1, 3), 16);
@@ -2536,46 +2456,9 @@ function blendWithDark(hexColor, alpha) {
   } catch (_) { return '#08080f'; }
 }
 
-function updateAutoGraphNode(paramId, step) {
-  if (!cy) return;
-  const cfg = AUTO_PARAMS.find(p => p.id === paramId);
-  if (!cfg) return;
-  const node = cy.getElementById(`auto-${paramId}-${step}`);
-  if (!node.length) return;
-  const val  = autoSeqs[paramId][step];
-  const norm = normalizeAutoValue(paramId, val);
-  node.data('label', cfg.format(val));
-  node.data('size', 28 + norm * 14);
-}
+function updateAutoGraphNode() { /* no-op: auto ring visualization removed */ }
 
-function updateAutoGraphPlayhead(paramId, step, nextStep) {
-  if (!cy) return;
-
-  // Un-highlight previous node for this param
-  if (prevAutoPlayingNode[paramId]) {
-    prevAutoPlayingNode[paramId].removeClass('auto-playing');
-    prevAutoPlayingNode[paramId] = null;
-  }
-
-  const curNode = cy.getElementById(`auto-${paramId}-${step}`);
-  if (curNode.length) {
-    curNode.addClass('auto-playing');
-    prevAutoPlayingNode[paramId] = curNode;
-  }
-
-  // Animate per-param ball
-  const ball    = cy.getElementById(`__auto-ball-${paramId}__`);
-  if (!ball.length) return;
-  const srcNode = cy.getElementById(`auto-${paramId}-${step}`);
-  const tgtNode = cy.getElementById(`auto-${paramId}-${nextStep}`);
-  if (!srcNode.length || !tgtNode.length) return;
-
-  const stepMs = (60 / Tone.Transport.bpm.value / 4) * 1000;
-  ball.stop();
-  ball.position(srcNode.position());
-  ball.style('opacity', 1);
-  ball.animate({ position: tgtNode.position(), duration: stepMs, easing: 'linear' });
-}
+function updateAutoGraphPlayhead() { /* no-op: auto ring visualization removed */ }
 
 /** Show a teal dot on every auto bar column that has an active note. */
 function updateAutoBarNoteIndicators() {
@@ -2670,7 +2553,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('fit-btn').addEventListener('click', fitGraph);
   document.getElementById('notes-save-btn').addEventListener('click', saveNotesPattern);
+  document.getElementById('notes-save-new-btn').addEventListener('click', saveNewNotesPattern);
   document.getElementById('drum-save-btn').addEventListener('click', saveDrumPattern);
+  document.getElementById('drum-save-new-btn').addEventListener('click', saveNewDrumPattern);
 
   const settingsToggle = document.getElementById('settings-toggle');
   const settingsPanel  = document.getElementById('settings-panel');
