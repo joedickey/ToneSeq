@@ -11,6 +11,7 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow-x: hidden;
 }
 
 /* ─── Header ─────────────────────────────────── */
@@ -87,6 +88,22 @@ h1 {
   border-radius: 50%;
   background: #00d4aa;
   cursor: pointer;
+}
+
+.vol-control input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #00d4aa;
+  border: none;
+  cursor: pointer;
+}
+
+.vol-control input[type="range"]::-moz-range-track {
+  background: #2a2a4a;
+  height: 4px;
+  border-radius: 2px;
+  border: none;
 }
 
 /* BPM */
@@ -279,6 +296,13 @@ h1 {
   background: #00d4aa;
   border: none;
   cursor: pointer;
+}
+
+.adsr-group input[type="range"]::-moz-range-track {
+  background: #2a2a4a;
+  height: 4px;
+  border-radius: 2px;
+  border: none;
 }
 
 .adsr-val {
@@ -1008,4 +1032,12 @@ h1 {
 #fit-btn:hover {
   opacity: 1;
   border-color: #00d4aa;
+}
+
+/* ─── Minimal responsive wrap ────────────────── */
+
+@media (max-width: 768px) {
+  .header-row { flex-wrap: wrap; }
+  .controls { flex-wrap: wrap; gap: 6px; }
+  #graph-wrap { min-height: 220px; }
 }
