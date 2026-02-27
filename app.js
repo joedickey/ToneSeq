@@ -456,6 +456,7 @@ function saveNotesPattern() {
       Object.assign(existing, snapshot);
       existing.thumbnail = generateThumbnail('notes', existing);
       rebuildPatternThumbnails();
+      scheduleHashSync();
       return;
     }
   }
@@ -482,6 +483,7 @@ function saveNewNotesPattern() {
   activeNotesPatternId = id;
   rebuildPatternThumbnails();
   updateNotesCenterLabel();
+  scheduleHashSync();
 }
 
 /** Save: update active drum pattern in place, or create first if none. */
@@ -494,6 +496,7 @@ function saveDrumPattern() {
       Object.assign(existing, snapshot);
       existing.thumbnail = generateThumbnail('drums', existing);
       rebuildPatternThumbnails();
+      scheduleHashSync();
       return;
     }
   }
@@ -520,6 +523,7 @@ function saveNewDrumPattern() {
   activeDrumPatternId = id;
   rebuildPatternThumbnails();
   updateDrumsCenterLabel();
+  scheduleHashSync();
 }
 
 /** Update pattern in-place without changing thumbnail or name. */
@@ -550,11 +554,13 @@ function queueNotesSwitch(patternId) {
       updateGraph();
       updateNotesCenterLabel();
       rebuildPatternThumbnails();
+      scheduleHashSync();
     }
     return;
   }
   pendingNotesSwitch = patternId;
   rebuildPatternThumbnails();
+  scheduleHashSync();
 }
 
 /** Queue a drum pattern switch at the next loop boundary. */
@@ -569,11 +575,13 @@ function queueDrumSwitch(patternId) {
       updateDrumGraph();
       updateDrumsCenterLabel();
       rebuildPatternThumbnails();
+      scheduleHashSync();
     }
     return;
   }
   pendingDrumSwitch = patternId;
   rebuildPatternThumbnails();
+  scheduleHashSync();
 }
 
 function updateNotesCenterLabel() { /* no-op: center labels are static */ }
@@ -601,6 +609,7 @@ function deletePattern(patternId, patternType) {
     if (pendingDrumSwitch === patternId) pendingDrumSwitch = null;
   }
   rebuildPatternThumbnails();
+  scheduleHashSync();
 }
 
 /** Clear delete-confirm state. */
@@ -612,6 +621,287 @@ function clearDeleteConfirm() {
   deleteConfirmId = null;
   clearTimeout(deleteConfirmTimer);
   deleteConfirmTimer = null;
+}
+
+// ═══════════════════════════════════════════════════════════
+// URL HASH SESSION — serialize / deserialize / sync
+// ═══════════════════════════════════════════════════════════
+
+const WAVE_TO_CODE = { sine: 's', square: 'q', sawtooth: 'w' };
+const CODE_TO_WAVE = { s: 'sine', q: 'square', w: 'sawtooth' };
+const MODE_TO_CODE = { forward: 'f', reverse: 'r', pingpong: 'p' };
+const CODE_TO_MODE = { f: 'forward', r: 'reverse', p: 'pingpong' };
+const FTYPE_TO_CODE = { lowpass: 'l', highpass: 'h' };
+const CODE_TO_FTYPE = { l: 'lowpass', h: 'highpass' };
+const DMODE_TO_CODE = { forward: 'f', link: 'k' };
+const CODE_TO_DMODE = { f: 'forward', k: 'link' };
+
+function encodeGrid(gridObj, rows) {
+  let bits = '';
+  for (let r = 0; r < rows; r++)
+    for (let s = 0; s < STEPS; s++)
+      bits += gridObj[r][s] ? '1' : '0';
+  // Convert bitstring to hex (4 bits per char)
+  let hex = '';
+  for (let i = 0; i < bits.length; i += 4)
+    hex += parseInt(bits.slice(i, i + 4), 2).toString(16);
+  return hex;
+}
+
+function decodeGrid(hex, rows) {
+  let bits = '';
+  for (let i = 0; i < hex.length; i++)
+    bits += parseInt(hex[i], 16).toString(2).padStart(4, '0');
+  const g = {};
+  for (let r = 0; r < rows; r++) {
+    g[r] = new Array(STEPS).fill(false);
+    for (let s = 0; s < STEPS; s++)
+      g[r][s] = bits[r * STEPS + s] === '1';
+  }
+  return g;
+}
+
+function rd(v) { return Math.round(v * 100) / 100; }
+
+function encodeAutoSeqs(seqs, active) {
+  const out = {};
+  for (const pid of active) {
+    if (!seqs[pid]) continue;
+    out[pid] = Array.from(seqs[pid]).map(v => rd(v));
+  }
+  return out;
+}
+
+function encodeNotesPattern(pat) {
+  const c = {
+    g: encodeGrid(pat.grid, NUM_ROWS),
+    w: WAVE_TO_CODE[pat.waveform] || 's',
+    m: MODE_TO_CODE[pat.playbackMode] || 'f',
+    o: pat.octaveOffset,
+    r: pat.rootSemitone,
+  };
+  const sv = pat.sliderValues;
+  c.sv = {
+    ff: rd(sv.filterFreq), fq: rd(sv.filterQ), ft: FTYPE_TO_CODE[sv.filterType] || 'l',
+    rs: rd(sv.reverbSend), rd: rd(sv.reverbDecay),
+    a: rd(sv.attack), d: rd(sv.decay), s: rd(sv.sustain), re: rd(sv.release),
+  };
+  if (pat.autoActive && pat.autoActive.size > 0) {
+    c.aa = [...pat.autoActive];
+    c.as = encodeAutoSeqs(pat.autoSeqs, pat.autoActive);
+  }
+  return c;
+}
+
+function decodeNotesPattern(c) {
+  const sv = c.sv || {};
+  return {
+    grid: decodeGrid(c.g, NUM_ROWS),
+    waveform: CODE_TO_WAVE[c.w] || 'sine',
+    playbackMode: CODE_TO_MODE[c.m] || 'forward',
+    octaveOffset: c.o || 0,
+    rootSemitone: c.r || 0,
+    sliderValues: {
+      filterFreq: sv.ff != null ? sv.ff : 75,
+      filterQ: sv.fq != null ? sv.fq : 1,
+      filterType: CODE_TO_FTYPE[sv.ft] || 'lowpass',
+      reverbSend: sv.rs != null ? sv.rs : 0,
+      reverbDecay: sv.rd != null ? sv.rd : 2,
+      attack: sv.a != null ? sv.a : 0.01,
+      decay: sv.d != null ? sv.d : 0.1,
+      sustain: sv.s != null ? sv.s : 0.5,
+      release: sv.re != null ? sv.re : 0.4,
+    },
+    autoActive: new Set(c.aa || []),
+    autoSeqs: Object.fromEntries(
+      Object.entries(c.as || {}).map(([k, v]) => [k, new Float64Array(v)])
+    ),
+  };
+}
+
+function encodeDrumPattern(pat) {
+  const c = {
+    g: encodeGrid(pat.drumGrid, NUM_DRUM_ROWS),
+    dm: DMODE_TO_CODE[pat.drumPlaybackMode] || 'f',
+  };
+  // Mutes — only include if any are true
+  const mArr = [];
+  let anyMute = false;
+  for (let r = 0; r < NUM_DRUM_ROWS; r++) {
+    mArr.push(pat.drumMuted[r] ? 1 : 0);
+    if (pat.drumMuted[r]) anyMute = true;
+  }
+  if (anyMute) c.mu = mArr;
+  // Volumes — only include if any differ from 1
+  const vArr = [];
+  let anyVol = false;
+  for (let r = 0; r < NUM_DRUM_ROWS; r++) {
+    vArr.push(rd(pat.drumTrackVolume[r]));
+    if (pat.drumTrackVolume[r] !== 1) anyVol = true;
+  }
+  if (anyVol) c.tv = vArr;
+  return c;
+}
+
+function decodeDrumPattern(c) {
+  const pat = {
+    drumGrid: decodeGrid(c.g, NUM_DRUM_ROWS),
+    drumPlaybackMode: CODE_TO_DMODE[c.dm] || 'forward',
+    drumMuted: {},
+    drumTrackVolume: {},
+  };
+  for (let r = 0; r < NUM_DRUM_ROWS; r++) {
+    pat.drumMuted[r] = c.mu ? !!c.mu[r] : false;
+    pat.drumTrackVolume[r] = c.tv ? c.tv[r] : 1;
+  }
+  return pat;
+}
+
+function serializeSession() {
+  const data = { v: 1 };
+
+  // Live state
+  data.n = encodeNotesPattern(snapshotNotesPattern());
+  data.d = encodeDrumPattern(snapshotDrumPattern());
+
+  // Global controls
+  data.bpm = parseInt(document.getElementById('bpm').value, 10) || 120;
+  const volDb = parseInt(document.getElementById('vol').value, 10);
+  if (volDb !== 0) data.vol = volDb;
+  if (notesMuted) data.nm = 1;
+  if (drumSeqMuted) data.dsm = 1;
+  if (metronomeEnabled) data.met = 1;
+
+  // Saved patterns
+  if (notesPatterns.length > 0) {
+    data.np = notesPatterns.map(p => encodeNotesPattern(p));
+    if (activeNotesPatternId) {
+      const idx = notesPatterns.findIndex(p => p.id === activeNotesPatternId);
+      if (idx >= 0) data.ani = idx;
+    }
+  }
+  if (drumPatterns.length > 0) {
+    data.dp = drumPatterns.map(p => encodeDrumPattern(p));
+    if (activeDrumPatternId) {
+      const idx = drumPatterns.findIndex(p => p.id === activeDrumPatternId);
+      if (idx >= 0) data.adi = idx;
+    }
+  }
+
+  return data;
+}
+
+function deserializeSession(data) {
+  // Live notes state
+  const notesPat = decodeNotesPattern(data.n);
+  restoreNotesPattern(notesPat);
+  refreshNotesUI();
+
+  // Live drum state
+  const drumPat = decodeDrumPattern(data.d);
+  restoreDrumPattern(drumPat);
+  refreshDrumUI();
+
+  // Globals
+  const bpmEl = document.getElementById('bpm');
+  bpmEl.value = data.bpm || 120;
+  setBPM(bpmEl.value);
+
+  if (data.vol != null) {
+    const volEl = document.getElementById('vol');
+    volEl.value = data.vol;
+    setMasterVolume(data.vol);
+    document.getElementById('vol-val').textContent = `${data.vol}dB`;
+  }
+
+  notesMuted = !!data.nm;
+  document.getElementById('notes-mute-btn').classList.toggle('active', notesMuted);
+  drumSeqMuted = !!data.dsm;
+  document.getElementById('drum-seq-mute-btn').classList.toggle('active', drumSeqMuted);
+
+  if (data.met) {
+    metronomeEnabled = true;
+    document.getElementById('metro-btn').classList.add('active');
+  }
+
+  // Restore saved patterns
+  notesPatterns.length = 0;
+  drumPatterns.length = 0;
+  activeNotesPatternId = null;
+  activeDrumPatternId = null;
+  notesNameCounter = 0;
+  drumNameCounter = 0;
+
+  if (data.np) {
+    data.np.forEach(c => {
+      const decoded = decodeNotesPattern(c);
+      const id = crypto.randomUUID ? crypto.randomUUID() : 'np-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+      notesPatterns.push({
+        id,
+        name: autoNotesName(),
+        type: 'notes',
+        ...decoded,
+        thumbnail: '',
+      });
+      notesPatterns[notesPatterns.length - 1].thumbnail = generateThumbnail('notes', notesPatterns[notesPatterns.length - 1]);
+    });
+    if (data.ani != null && data.ani < notesPatterns.length)
+      activeNotesPatternId = notesPatterns[data.ani].id;
+  }
+
+  if (data.dp) {
+    data.dp.forEach(c => {
+      const decoded = decodeDrumPattern(c);
+      const id = crypto.randomUUID ? crypto.randomUUID() : 'dp-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+      drumPatterns.push({
+        id,
+        name: autoDrumName(),
+        type: 'drums',
+        ...decoded,
+        thumbnail: '',
+      });
+      drumPatterns[drumPatterns.length - 1].thumbnail = generateThumbnail('drums', drumPatterns[drumPatterns.length - 1]);
+    });
+    if (data.adi != null && data.adi < drumPatterns.length)
+      activeDrumPatternId = drumPatterns[data.adi].id;
+  }
+
+  rebuildPatternThumbnails();
+  updateGraph();
+  updateDrumGraph();
+}
+
+// ─── Debounced Hash Sync ──────────────────────────────────────
+
+let hashSyncTimer = null;
+function scheduleHashSync() {
+  clearTimeout(hashSyncTimer);
+  hashSyncTimer = setTimeout(syncHash, 500);
+}
+function syncHash() {
+  try {
+    const data = serializeSession();
+    const compressed = LZString.compressToEncodedURIComponent(JSON.stringify(data));
+    history.replaceState(null, '', '#' + compressed);
+  } catch (e) {
+    console.warn('Hash sync failed:', e);
+  }
+}
+
+function restoreFromHash() {
+  const hash = location.hash.slice(1);
+  if (!hash) return false;
+  try {
+    const json = LZString.decompressFromEncodedURIComponent(hash);
+    if (!json) throw new Error('Decompression returned null');
+    const data = JSON.parse(json);
+    if (data.v !== 1) throw new Error('Unknown session version: ' + data.v);
+    deserializeSession(data);
+    return true;
+  } catch (e) {
+    console.warn('Could not restore session from URL hash:', e);
+    return false;
+  }
 }
 
 /** Enable/disable "+" buttons based on pattern count. */
@@ -715,6 +1005,7 @@ function onCellClick(row, step, cell) {
   grid[row][step] = !grid[row][step];
   cell.classList.toggle('active', grid[row][step]);
   updateGraph();
+  scheduleHashSync();
 }
 
 // ─── Drag-to-paint for step cells and drum cells ─────────────────────────────
@@ -973,6 +1264,7 @@ function toggleMetronome() {
   } else {
     if (metronomeLoop !== null) { Tone.Transport.clear(metronomeLoop); metronomeLoop = null; }
   }
+  scheduleHashSync();
 }
 
 /** Switch playback mode. If playing, queues the change for the next loop boundary. */
@@ -1094,6 +1386,7 @@ function clearAll() {
   });
   // Clear drum grid
   clearDrumGrid();
+  scheduleHashSync();
 }
 
 function clearCurrentSeq() {
@@ -1109,6 +1402,7 @@ function clearCurrentSeq() {
     refreshAutoSeqPanel(paramId);
     for (let s = 0; s < 16; s++) updateAutoGraphNode(paramId, s);
   }
+  scheduleHashSync();
 }
 
 function randomizeAutoSeq(paramId) {
@@ -1125,6 +1419,7 @@ function randomizeAutoSeq(paramId) {
   }
   refreshAutoSeqPanel(paramId);
   for (let s = 0; s < 16; s++) updateAutoGraphNode(paramId, s);
+  scheduleHashSync();
 }
 
 // ─── Random Sequence ───────────────────────────────────────
@@ -1241,6 +1536,7 @@ function randomSeq() {
   });
 
   updateGraph();
+  scheduleHashSync();
 }
 
 // ─── Octave / Root ─────────────────────────────────────────
@@ -1356,7 +1652,7 @@ function buildDrumRoll() {
       };
       setVol(e.clientX);
       const onMove = (me) => setVol(me.clientX);
-      const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+      const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); scheduleHashSync(); };
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
     });
@@ -1371,7 +1667,7 @@ function buildDrumRoll() {
       };
       setVol(e.touches[0].clientX);
       const onMove = (te) => setVol(te.touches[0].clientX);
-      const onEnd = () => { volSlider.removeEventListener('touchmove', onMove); volSlider.removeEventListener('touchend', onEnd); };
+      const onEnd = () => { volSlider.removeEventListener('touchmove', onMove); volSlider.removeEventListener('touchend', onEnd); scheduleHashSync(); };
       volSlider.addEventListener('touchmove', onMove, { passive: false });
       volSlider.addEventListener('touchend', onEnd);
     }, { passive: false });
@@ -1398,6 +1694,7 @@ function onDrumCellClick(row, step, cell) {
   drumGrid[row][step] = !drumGrid[row][step];
   cell.classList.toggle('active', drumGrid[row][step]);
   updateDrumGraph();
+  scheduleHashSync();
 }
 
 function toggleDrumMute(row, btn) {
@@ -1406,12 +1703,14 @@ function toggleDrumMute(row, btn) {
   document.querySelectorAll(`.drum-cell[data-row="${row}"]`).forEach(cell => {
     cell.classList.toggle('muted', drumMuted[row]);
   });
+  scheduleHashSync();
 }
 
 function clearDrumGrid() {
   for (let r = 0; r < NUM_DRUM_ROWS; r++) drumGrid[r].fill(false);
   document.querySelectorAll('.drum-cell.active').forEach(el => el.classList.remove('active'));
   updateDrumGraph();
+  scheduleHashSync();
 }
 
 function randomDrumSeq() {
@@ -1466,10 +1765,12 @@ function randomDrumSeq() {
   }
 
   updateDrumGraph();
+  scheduleHashSync();
 }
 
 function setDrumPlaybackMode(mode) {
   drumPlaybackMode = mode;
+  scheduleHashSync();
 }
 
 function highlightDrumPlayhead(step) {
@@ -2195,6 +2496,7 @@ function enterSeqMode(paramId) {
   buildAutoSeqPanel(paramId);
 
   switchTab(paramId);
+  scheduleHashSync();
 }
 
 function exitSeqMode(paramId) {
@@ -2226,6 +2528,7 @@ function exitSeqMode(paramId) {
   } else if (activeTab === paramId) {
     switchTab([...autoActive][0]);
   }
+  scheduleHashSync();
 }
 
 function addTab(paramId, cfg) {
@@ -2352,6 +2655,7 @@ function setAutoBarValue(e, paramId, step, track) {
   if (fill) fill.style.height = (norm * 100) + '%';
 
   updateAutoGraphNode(paramId, step); // always update — graph always shows all rings
+  scheduleHashSync();
 }
 
 function rebuildAutoGraph() { /* no-op: auto ring visualization removed */ }
@@ -2453,6 +2757,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (cellDragState.type === 'notes') updateGraph();
     else updateDrumGraph();
     cellDragState = null;
+    scheduleHashSync();
   });
 
   document.getElementById('play-btn').addEventListener('click', play);
@@ -2463,10 +2768,12 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('notes-mute-btn').addEventListener('click', () => {
     notesMuted = !notesMuted;
     document.getElementById('notes-mute-btn').classList.toggle('active', notesMuted);
+    scheduleHashSync();
   });
   document.getElementById('drum-seq-mute-btn').addEventListener('click', () => {
     drumSeqMuted = !drumSeqMuted;
     document.getElementById('drum-seq-mute-btn').classList.toggle('active', drumSeqMuted);
+    scheduleHashSync();
   });
   document.getElementById('random-btn').addEventListener('click', () => {
     if (activeTab === 'notes') randomSeq();
@@ -2508,13 +2815,14 @@ document.addEventListener('DOMContentLoaded', () => {
     resizeTimer = setTimeout(fitGraph, 80);
   }).observe(document.getElementById('graph-wrap'));
 
-  document.getElementById('bpm').addEventListener('input', e => setBPM(e.target.value));
+  document.getElementById('bpm').addEventListener('input', e => { setBPM(e.target.value); scheduleHashSync(); });
 
   document.querySelectorAll('.waveform-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.waveform-btn').forEach(b => b.classList.remove('selected'));
       btn.classList.add('selected');
       setWaveform(btn.dataset.wave);
+      scheduleHashSync();
     });
   });
 
@@ -2523,6 +2831,7 @@ document.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('.playmode-btn').forEach(b => b.classList.remove('selected'));
       btn.classList.add('selected');
       setPlaybackMode(btn.dataset.mode);
+      scheduleHashSync();
     });
   });
 
@@ -2531,6 +2840,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const db = parseInt(e.target.value, 10);
     setMasterVolume(db);
     document.getElementById('vol-val').textContent = `${db}dB`;
+    scheduleHashSync();
   });
 
   // Filter controls
@@ -2538,12 +2848,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const freq = freqFromSlider(parseFloat(e.target.value));
     filter.frequency.value = freq;
     document.getElementById('flt-freq-val').textContent = formatFreq(freq);
+    scheduleHashSync();
   });
 
   document.getElementById('flt-q').addEventListener('input', e => {
     const val = parseFloat(e.target.value);
     filter.Q.value = val;
     document.getElementById('flt-q-val').textContent = val.toFixed(1);
+    scheduleHashSync();
   });
 
   document.querySelectorAll('.filter-type-btn').forEach(btn => {
@@ -2551,6 +2863,7 @@ document.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('.filter-type-btn').forEach(b => b.classList.remove('selected'));
       btn.classList.add('selected');
       filter.type = btn.dataset.type;
+      scheduleHashSync();
     });
   });
 
@@ -2559,6 +2872,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const val = parseFloat(e.target.value);
     reverbSend.gain.value = val;
     document.getElementById('rvb-send-val').textContent = val.toFixed(2);
+    scheduleHashSync();
   });
 
   let reverbDecayTimer = null;
@@ -2568,6 +2882,7 @@ document.addEventListener('DOMContentLoaded', () => {
     reverb.decay = val;
     clearTimeout(reverbDecayTimer);
     reverbDecayTimer = setTimeout(() => reverb.generate(), 400);
+    scheduleHashSync();
   });
 
   // ADSR sliders
@@ -2584,12 +2899,13 @@ document.addEventListener('DOMContentLoaded', () => {
       const val = parseFloat(slider.value);
       setEnvelope(param, val);
       display.textContent = val.toFixed(2) + unit;
+      scheduleHashSync();
     });
   });
 
   // Octave controls
-  document.getElementById('oct-down').addEventListener('click', () => setOctave(-1));
-  document.getElementById('oct-up').addEventListener('click',   () => setOctave(+1));
+  document.getElementById('oct-down').addEventListener('click', () => { setOctave(-1); scheduleHashSync(); });
+  document.getElementById('oct-up').addEventListener('click',   () => { setOctave(+1); scheduleHashSync(); });
 
   // Root note
   document.querySelectorAll('.root-btn').forEach(btn => {
@@ -2597,6 +2913,10 @@ document.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('.root-btn').forEach(b => b.classList.remove('selected'));
       btn.classList.add('selected');
       setRootNote(parseInt(btn.dataset.semitone, 10));
+      scheduleHashSync();
     });
   });
+
+  // Restore session from URL hash (if present)
+  restoreFromHash();
 });
