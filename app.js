@@ -554,31 +554,8 @@ function queueDrumSwitch(patternId) {
   rebuildPatternThumbnails();
 }
 
-/** Update the __notes-center__ label to show active pattern name. */
-function updateNotesCenterLabel() {
-  if (!cy) return;
-  const node = cy.getElementById('__notes-center__');
-  if (!node.length) return;
-  if (activeNotesPatternId) {
-    const pat = notesPatterns.find(p => p.id === activeNotesPatternId);
-    if (pat) node.data('label', pat.name);
-  } else {
-    node.data('label', 'Notes');
-  }
-}
-
-/** Update the __drums-center__ label to show active pattern name. */
-function updateDrumsCenterLabel() {
-  if (!cy) return;
-  const node = cy.getElementById('__drums-center__');
-  if (!node.length) return;
-  if (activeDrumPatternId) {
-    const pat = drumPatterns.find(p => p.id === activeDrumPatternId);
-    if (pat) node.data('label', pat.name);
-  } else {
-    node.data('label', 'Drums');
-  }
-}
+function updateNotesCenterLabel() { /* no-op: center labels are static */ }
+function updateDrumsCenterLabel() { /* no-op: center labels are static */ }
 
 /** Delete a pattern by ID. */
 function deletePattern(patternId, patternType) {
@@ -640,7 +617,7 @@ function rebuildPatternThumbnails() {
   });
 
   // Add or update thumbnail nodes
-  allPatterns.forEach(pat => {
+  allPatterns.forEach((pat, idx) => {
     const nodeId = `__pat-${pat.id}__`;
     const isActive = pat.id === activeNotesPatternId || pat.id === activeDrumPatternId;
     const isPending = pat.id === pendingNotesSwitch || pat.id === pendingDrumSwitch;
@@ -649,17 +626,17 @@ function rebuildPatternThumbnails() {
     let node = cy.getElementById(nodeId);
     if (node.length) {
       node.data('thumbnail', pat.thumbnail);
-      node.data('label', pat.name);
       node.data('color', color);
+      node.data('order', idx);
       node.toggleClass('pattern-active', isActive);
       node.toggleClass('pattern-pending', isPending);
     } else {
       cy.add({
         data: {
           id: nodeId,
-          label: pat.name,
           thumbnail: pat.thumbnail,
           color,
+          order: idx,
           patternId: pat.id,
           patternType: pat.type,
         },
@@ -671,54 +648,6 @@ function rebuildPatternThumbnails() {
 
   positionAllRings();
   updateSaveNewButtonState();
-}
-
-/** Start inline rename of a pattern thumbnail node. */
-function startInlineRename(cyNode) {
-  const patternId   = cyNode.data('patternId');
-  const patternType = cyNode.data('patternType');
-  const pat = patternType === 'notes'
-    ? notesPatterns.find(p => p.id === patternId)
-    : drumPatterns.find(p => p.id === patternId);
-  if (!pat) return;
-
-  const container = cy.container();
-  const pos = cyNode.renderedPosition();
-
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'pattern-rename-input';
-  input.value = pat.name;
-  input.style.position = 'absolute';
-  input.style.left = (pos.x - 50) + 'px';
-  input.style.top  = (pos.y + 40) + 'px';
-  input.style.zIndex = '100';
-  container.appendChild(input);
-  input.focus();
-  input.select();
-
-  function commit() {
-    const newName = input.value.trim() || pat.name;
-    pat.name = newName;
-    cyNode.data('label', newName);
-    if (patternType === 'notes') updateNotesCenterLabel();
-    else updateDrumsCenterLabel();
-    cleanup();
-  }
-
-  function cleanup() {
-    input.removeEventListener('keydown', onKey);
-    input.removeEventListener('blur', commit);
-    if (input.parentNode) input.parentNode.removeChild(input);
-  }
-
-  function onKey(e) {
-    if (e.key === 'Enter') { e.preventDefault(); commit(); }
-    else if (e.key === 'Escape') { e.preventDefault(); cleanup(); }
-  }
-
-  input.addEventListener('keydown', onKey);
-  input.addEventListener('blur', commit);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1607,15 +1536,10 @@ function updateDrumGraph() {
 
   // Manage __drums-center__ label node
   const drumsCenter = cy.getElementById('__drums-center__');
-  const drumsCenterLabel = activeDrumPatternId
-    ? (drumPatterns.find(p => p.id === activeDrumPatternId) || {}).name || 'Drums'
-    : 'Drums';
   if (drumStepSequence.length === 0) {
     if (drumsCenter.length) drumsCenter.remove();
   } else if (!drumsCenter.length) {
-    cy.add({ data: { id: '__drums-center__', label: drumsCenterLabel }, classes: 'drum-ring-label', position: { x: 0, y: 0 } });
-  } else {
-    drumsCenter.data('label', drumsCenterLabel);
+    cy.add({ data: { id: '__drums-center__', label: 'Drums' }, classes: 'drum-ring-label', position: { x: 0, y: 0 } });
   }
 
   // Add missing drum nodes
@@ -1838,17 +1762,13 @@ function initGraph() {
       {
         selector: 'node.pattern-thumb',
         style: {
-          'width': 80, 'height': 80,
+          'width': 90, 'height': 90,
           'background-image': 'data(thumbnail)',
           'background-fit': 'cover',
           'background-color': '#0d0d1a',
           'border-width': 2, 'border-color': 'data(color)',
           'border-opacity': 0.5,
-          'label': 'data(label)',
-          'font-size': '10px', 'font-family': 'monospace',
-          'color': 'data(color)',
-          'text-valign': 'bottom', 'text-margin-y': 8,
-          'text-halign': 'center',
+          'label': '',
           'opacity': 0.7,
           'shape': 'round-rectangle',
         },
@@ -1871,7 +1791,7 @@ function initGraph() {
       {
         selector: 'node.pattern-thumb.pattern-delete-confirm',
         style: {
-          'border-width': 3, 'border-color': '#ff4444',
+          'border-width': 3, 'border-color': '#ff8800',
           'border-opacity': 1,
           'opacity': 1.0,
         },
@@ -1902,7 +1822,7 @@ function initGraph() {
     else queueDrumSwitch(patternId);
   });
 
-  // Long-press thumbnail → enter delete-confirm mode (red border, tap again to delete)
+  // Long-press thumbnail → enter delete-confirm mode (orange border, tap again to delete)
   cy.on('taphold', 'node.pattern-thumb', (e) => {
     const patternId = e.target.data('patternId');
     clearDeleteConfirm();
@@ -1911,25 +1831,6 @@ function initGraph() {
     deleteConfirmTimer = setTimeout(() => {
       clearDeleteConfirm();
     }, 3000);
-  });
-
-  // Double-tap thumbnail to rename
-  cy.on('dbltap', 'node.pattern-thumb', (e) => {
-    startInlineRename(e.target);
-  });
-
-  // Double-tap center labels to rename active pattern
-  cy.on('dbltap', 'node.notes-ring-label, node.drum-ring-label', (e) => {
-    const nodeId = e.target.id();
-    if (nodeId === '__notes-center__' && activeNotesPatternId) {
-      const pat = notesPatterns.find(p => p.id === activeNotesPatternId);
-      const thumbNode = cy.getElementById(`__pat-${activeNotesPatternId}__`);
-      if (pat && thumbNode.length) startInlineRename(thumbNode);
-    } else if (nodeId === '__drums-center__' && activeDrumPatternId) {
-      const pat = drumPatterns.find(p => p.id === activeDrumPatternId);
-      const thumbNode = cy.getElementById(`__pat-${activeDrumPatternId}__`);
-      if (pat && thumbNode.length) startInlineRename(thumbNode);
-    }
   });
 }
 
@@ -2060,10 +1961,13 @@ function positionAllRings() {
       if (n.data('patternType') === 'notes') noteThumbs.push(n);
       else drumThumbs.push(n);
     });
+    // Sort by creation order (oldest on top)
+    noteThumbs.sort((a, b) => (a.data('order') || 0) - (b.data('order') || 0));
+    drumThumbs.sort((a, b) => (a.data('order') || 0) - (b.data('order') || 0));
 
-    const thumbSpacing = 84;
-    const leftX  = cx - clusterR - 55;
-    const rightX = cx + clusterR + 55;
+    const thumbSpacing = 94;
+    const leftX  = cx - clusterR - 52;
+    const rightX = cx + clusterR + 52;
 
     // Notes thumbnails in a vertical column on the left
     const notesStartY = cy_c - ((noteThumbs.length - 1) * thumbSpacing) / 2;
@@ -2078,7 +1982,7 @@ function positionAllRings() {
     });
   }
 
-  cy.fit(20);
+  cy.fit(10);
 }
 
 /** Legacy alias */
@@ -2166,15 +2070,10 @@ function updateGraph() {
 
   // Manage Notes center label
   const notesCenter = cy.getElementById('__notes-center__');
-  const notesCenterLabel = activeNotesPatternId
-    ? (notesPatterns.find(p => p.id === activeNotesPatternId) || {}).name || 'Notes'
-    : 'Notes';
   if (stepSequence.length === 0) {
     if (notesCenter.length) notesCenter.remove();
   } else if (!notesCenter.length) {
-    cy.add({ data: { id: '__notes-center__', label: notesCenterLabel }, classes: 'notes-ring-label', position: { x: 0, y: 0 } });
-  } else {
-    notesCenter.data('label', notesCenterLabel);
+    cy.add({ data: { id: '__notes-center__', label: 'Notes' }, classes: 'notes-ring-label', position: { x: 0, y: 0 } });
   }
 
   positionAllRings();
