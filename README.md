@@ -67,7 +67,7 @@ Built with [Tone.js](https://tonejs.github.io/) for audio synthesis and [Cytosca
 
 ## Support
 
-If you enjoy ToneSeq, consider [buying me a coffee](https://ko-fi.com/toneseq). Found a bug or have a feature request? [Open an issue](https://github.com/joedickey/ToneSeq/issues/new).
+If you enjoy ToneSeq, consider [buying me a coffee](https://buymeacoffee.com/toneseq). Found a bug or have a feature request? [Open an issue](https://github.com/joedickey/ToneSeq/issues/new).
 
 ## Note
 
