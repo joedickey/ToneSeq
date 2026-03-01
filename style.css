@@ -642,7 +642,6 @@ h1 {
   scrollbar-width: none;
 }
 .section-bar::-webkit-scrollbar { display: none; }
-}
 
 .section-label {
   padding: 3px 11px;
