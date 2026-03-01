@@ -30,7 +30,9 @@ header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 20px;
+  row-gap: 6px;
 }
 
 h1 {
@@ -112,7 +114,9 @@ h1 {
 .controls {
   display: flex;
   align-items: center;
-  gap: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+  row-gap: 6px;
 }
 
 /* Volume */
@@ -1128,8 +1132,7 @@ h1 {
 
 @media (max-width: 768px) {
   header { padding: 6px 12px; gap: 4px; }
-  .header-row { flex-wrap: wrap; gap: 10px; }
-  .controls { flex-wrap: wrap; gap: 4px; }
+  .controls { gap: 4px; row-gap: 4px; }
   .transport-controls,
   .playmode-control { display: contents; }
   #settings-panel { gap: 4px; }
