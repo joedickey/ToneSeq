@@ -2780,6 +2780,9 @@ document.addEventListener('DOMContentLoaded', () => {
     else randomizeAutoSeq(activeTab);
   });
   document.getElementById('fit-btn').addEventListener('click', fitGraph);
+  document.getElementById('info-bar-close').addEventListener('click', () => {
+    document.getElementById('info-bar').classList.add('hidden');
+  });
   document.getElementById('notes-save-btn').addEventListener('click', saveNotesPattern);
   document.getElementById('notes-save-new-btn').addEventListener('click', saveNewNotesPattern);
   document.getElementById('drum-save-btn').addEventListener('click', saveDrumPattern);

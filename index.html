@@ -11,11 +11,6 @@
   <header>
     <div class="header-row">
       <h1>ToneSeq</h1>
-      <nav class="header-links">
-        <a href="https://github.com/joedickey/ToneSeq#readme" target="_blank" rel="noopener" title="How to use ToneSeq">&#128214; Guide</a>
-        <a href="https://github.com/joedickey/ToneSeq/issues/new" target="_blank" rel="noopener" title="Report a bug or request a feature">&#128172; Feedback</a>
-        <a href="https://ko-fi.com/toneseq" target="_blank" rel="noopener" title="Support ToneSeq on Ko-fi">&#9749; Donate</a>
-      </nav>
       <div class="controls">
         <div class="bpm-control">
           <label for="bpm">BPM</label>
@@ -192,6 +187,17 @@
     <div id="graph"></div>
     <button id="fit-btn" title="Reset to optimal view">&#8859; Fit</button>
   </div>
+
+  <footer id="info-bar">
+    <nav class="info-links">
+      <a href="https://github.com/joedickey/ToneSeq#readme" target="_blank" rel="noopener" title="How to use ToneSeq">&#128214; Guide</a>
+      <span class="info-sep">·</span>
+      <a href="https://github.com/joedickey/ToneSeq/issues/new" target="_blank" rel="noopener" title="Report a bug or request a feature">&#128172; Feedback</a>
+      <span class="info-sep">·</span>
+      <a href="https://ko-fi.com/toneseq" target="_blank" rel="noopener" title="Support ToneSeq on Ko-fi">&#9749; Donate</a>
+    </nav>
+    <button id="info-bar-close" title="Hide">&#9660;</button>
+  </footer>
 
   <script src="https://unpkg.com/tone@14.7.77/build/Tone.js"></script>
   <script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
