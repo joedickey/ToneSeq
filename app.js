@@ -2796,7 +2796,12 @@ document.addEventListener('DOMContentLoaded', () => {
     settingsToggle.textContent = collapsed ? '\u2699 Controls \u25b6' : '\u2699 Controls \u25bc';
     settingsToggle.classList.toggle('open', !collapsed);
   });
-  settingsToggle.classList.add('open');
+  if (window.innerWidth <= 768) {
+    settingsPanel.classList.add('collapsed');
+    settingsToggle.textContent = '\u2699 Controls \u25b6';
+  } else {
+    settingsToggle.classList.add('open');
+  }
 
   function makeCollapseToggle(btnId, targetId, afterShow) {
     const btn   = document.getElementById(btnId);

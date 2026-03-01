@@ -1105,7 +1105,10 @@ h1 {
 /* ─── Minimal responsive wrap ────────────────── */
 
 @media (max-width: 768px) {
-  .header-row { flex-wrap: wrap; }
-  .controls { flex-wrap: wrap; gap: 6px; }
+  header { padding: 6px 12px; gap: 4px; }
+  .header-row { flex-wrap: wrap; gap: 10px; }
+  .controls { flex-wrap: wrap; gap: 4px; }
+  .transport-controls,
+  .playmode-control { display: contents; }
   #graph-wrap { min-height: 220px; }
 }
