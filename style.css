@@ -331,16 +331,11 @@ h1 {
   flex-shrink: 0;
 }
 
-.adsr-group {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
 .adsr-group input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
   width: 100px;
-  flex: 1 1 60px;
+  flex: 0 1 100px;
   min-width: 40px;
   height: 4px;
   background: #2a2a4a;
@@ -578,7 +573,6 @@ h1 {
 }
 
 #settings-panel .fx-group {
-  flex: 1 1 auto;
   min-width: 0;
 }
 
