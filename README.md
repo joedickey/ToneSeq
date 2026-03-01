@@ -36,6 +36,10 @@ Or clone and open `index.html` directly — no build step, no server required.
 - Loop-boundary queuing — pattern switches take effect at the next loop start
 - Graph thumbnails show pattern content at a glance
 
+**Save & Share**
+- Full session state persists in the URL hash — bookmark or share a link to restore everything
+- Captures all patterns, control settings, waveforms, and playback modes
+
 **Visualization**
 - Cytoscape.js graph of active and saved patterns
 - Note nodes and drum ring indicators
