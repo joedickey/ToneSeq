@@ -645,11 +645,13 @@ h1 {
 }
 
 .section-label {
+  padding: 3px 11px;
   font-size: 0.72rem;
   font-weight: 700;
-  color: #444;
+  color: var(--section-color, #00d4aa);
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 0.5px;
+  border-bottom: 2px solid var(--section-color, #00d4aa);
 }
 
 .collapse-btn {
