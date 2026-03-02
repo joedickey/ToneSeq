@@ -10,7 +10,7 @@ const STEPS     = 16;
 const NODE_STACK_SPACING = 52; // px between node centres in a chord stack
 
 // ─── Drum Sequencer Constants ───────────────────────────────
-const DRUM_BASE = 'https://raw.githubusercontent.com/joedickey/tr-bot/master/src/audio/';
+const DRUM_BASE = 'audio/';
 const DRUM_INSTRUMENTS = [
   { label: 'Perc',  abbr: 'Pe', url: DRUM_BASE + 'trbotperc.mp3'  },
   { label: 'HH2',   abbr: 'H2', url: DRUM_BASE + 'trbothh2.mp3'   },
