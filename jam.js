@@ -10,11 +10,27 @@ const WS_RECONNECT_BASE = 1000;
 const WS_RECONNECT_MAX = 16000;
 const WS_URL = 'ws://localhost:8080';
 
+const CENOBITE_NAMES = [
+  'Pinhead', 'Chatterer', 'Butterball', 'Channard',
+  'Dreamer', 'Barbie', 'Spike', 'Angelique',
+  'Torso', 'Gasp', 'Weeper', 'Masque',
+  'Hunger', 'Alastor', 'Atkins', 'Charun',
+  'Bound', 'Crow', 'Face', 'Clown',
+  'Cowboy', 'Dixie', 'Baron', 'Balberith'
+];
+
+const JAM_COLORS = [
+  '#FF6B6B', '#4ECDC4', '#FFE66D',
+  '#A78BFA', '#FB923C', '#34D399'
+];
+
 // ── State ────────────────────────────────────────────────
 
 let jamWs = null;
 let jamRoomCode = null;
 let jamTabId = null;
+let jamName = null;
+let jamColor = null;
 let jamReconnectDelay = WS_RECONNECT_BASE;
 let jamReconnectTimer = null;
 let jamConnected = false;
@@ -30,6 +46,37 @@ function getOrCreateTabId() {
     sessionStorage.setItem('jamTabId', id);
   }
   return id;
+}
+
+// ── Identity assignment ─────────────────────────────────
+
+function getOrCreateIdentity() {
+  let name = sessionStorage.getItem('jamName');
+  let color = sessionStorage.getItem('jamColor');
+  if (!name) {
+    name = pickAvailableName();
+    sessionStorage.setItem('jamName', name);
+  }
+  if (!color) {
+    color = pickAvailableColor();
+    sessionStorage.setItem('jamColor', color);
+  }
+  jamName = name;
+  jamColor = color;
+}
+
+function pickAvailableName() {
+  const taken = new Set([...jamPeers.values()].map(p => p.name));
+  const available = CENOBITE_NAMES.filter(n => !taken.has(n));
+  const pool = available.length > 0 ? available : CENOBITE_NAMES;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function pickAvailableColor() {
+  const taken = new Set([...jamPeers.values()].map(p => p.color));
+  const available = JAM_COLORS.filter(c => !taken.has(c));
+  const pool = available.length > 0 ? available : JAM_COLORS;
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 // ── Join code generation ─────────────────────────────────
@@ -51,6 +98,8 @@ function connectToRoom(roomCode) {
 
   jamRoomCode = roomCode.toUpperCase();
   jamTabId = getOrCreateTabId();
+  getOrCreateIdentity();
+  jamPeers.clear();
   sessionStorage.setItem('jamRoom', jamRoomCode);
 
   const ws = new WebSocket(`${WS_URL}?room=${jamRoomCode}`);
@@ -65,6 +114,8 @@ function connectToRoom(roomCode) {
     ws.send(JSON.stringify({
       type: 'announce',
       tabId: jamTabId,
+      name: jamName,
+      color: jamColor,
       state: typeof serializeSession === 'function' ? serializeSession() : null
     }));
   };
@@ -181,11 +232,23 @@ function handleJamMessage(msg) {
 // ── Peer display ──────────────────────────────────────────
 
 function updatePeerDisplay() {
-  const countEl = document.getElementById('jam-peer-count');
-  if (countEl) {
-    const count = jamPeers.size;
-    countEl.textContent = count > 0 ? `${count} peer${count !== 1 ? 's' : ''}` : '';
+  const container = document.getElementById('jam-peers');
+  if (!container) return;
+
+  if (jamPeers.size === 0) {
+    container.innerHTML = '';
+    return;
   }
+
+  let html = '';
+  for (const [, peer] of jamPeers) {
+    const name = peer.name || '?';
+    const color = peer.color || '#777';
+    html += `<span class="jam-peer" style="--peer-color: ${color};">
+      <span class="jam-peer-dot"></span>${name}
+    </span>`;
+  }
+  container.innerHTML = html;
 }
 
 // ── UI ───────────────────────────────────────────────────
@@ -202,7 +265,10 @@ function updateJamUI(state) {
       panel.innerHTML = `
         <div class="jam-connected">
           <span class="jam-code-display">${jamRoomCode}</span>
-          <span id="jam-peer-count" class="jam-peer-count"></span>
+          <span class="jam-self" style="--peer-color: ${jamColor};">
+            <span class="jam-peer-dot"></span>${jamName}
+          </span>
+          <div id="jam-peers" class="jam-peers"></div>
           <button id="jam-copy-btn" class="jam-action-btn" title="Copy code">Copy</button>
           <button id="jam-leave-btn" class="jam-action-btn jam-leave" title="Leave session">Leave</button>
         </div>

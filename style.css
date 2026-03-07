@@ -655,6 +655,7 @@ h1 {
   border: 1px solid #3a3a5a;
   border-radius: 6px;
   white-space: nowrap;
+  width: max-content;
 }
 
 .jam-action-btn {
@@ -723,9 +724,25 @@ h1 {
   letter-spacing: 3px;
 }
 
-.jam-peer-count {
+.jam-peers {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.jam-peer, .jam-self {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 0.75rem;
-  color: #9e9ec0;
+  color: var(--peer-color, #777);
+}
+
+.jam-peer-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--peer-color, #777);
 }
 
 .jam-connected {
