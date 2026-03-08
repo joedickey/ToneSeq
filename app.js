@@ -1578,20 +1578,24 @@ async function initDrumSamples() {
   const playBtn = document.getElementById('play-btn');
   playBtn.disabled = true;
   playBtn.innerHTML = '&#8987; Loading';
-  await Tone.loaded();
-  // Extract raw AudioBuffers and detect per-sample leading-silence offset to compensate
-  // for MP3 encoder priming delay (~13–26 ms of silence before the actual transient).
-  for (let r = 0; r < NUM_DRUM_ROWS; r++) {
-    const buf = drumPlayers[r].get();
-    drumBuffers[r] = buf;
-    drumOffsets[r] = 0;
-    if (buf) {
-      const data = buf.getChannelData(0);
-      const threshold = 0.003; // ~0.3% of full scale
-      for (let i = 0; i < data.length; i++) {
-        if (Math.abs(data[i]) > threshold) { drumOffsets[r] = i / buf.sampleRate; break; }
+  try {
+    await Tone.loaded();
+    // Extract raw AudioBuffers and detect per-sample leading-silence offset to compensate
+    // for MP3 encoder priming delay (~13–26 ms of silence before the actual transient).
+    for (let r = 0; r < NUM_DRUM_ROWS; r++) {
+      const buf = drumPlayers[r].get();
+      drumBuffers[r] = buf;
+      drumOffsets[r] = 0;
+      if (buf) {
+        const data = buf.getChannelData(0);
+        const threshold = 0.003; // ~0.3% of full scale
+        for (let i = 0; i < data.length; i++) {
+          if (Math.abs(data[i]) > threshold) { drumOffsets[r] = i / buf.sampleRate; break; }
+        }
       }
     }
+  } catch (err) {
+    console.warn('Drum samples failed to load:', err.message);
   }
   playBtn.disabled = false;
   playBtn.innerHTML = '&#9654; Play';
@@ -1998,8 +2002,8 @@ function initGraph() {
         selector: 'edge[type = "sequence"]',
         style: {
           'width': 1.5,
-          'line-color': '#00d4aa40',
-          'target-arrow-color': '#00d4aa40',
+          'line-color': 'rgba(0,212,170,0.25)',
+          'target-arrow-color': 'rgba(0,212,170,0.25)',
           'target-arrow-shape': 'triangle',
           'curve-style': 'bezier',
           'arrow-scale': 0.75,
@@ -2083,8 +2087,8 @@ function initGraph() {
       {
         selector: 'edge[type = "drum-sequence"]',
         style: {
-          'width': 1.5, 'line-color': '#ff6b6b40',
-          'target-arrow-color': '#ff6b6b40', 'target-arrow-shape': 'triangle',
+          'width': 1.5, 'line-color': 'rgba(255,107,107,0.25)',
+          'target-arrow-color': 'rgba(255,107,107,0.25)', 'target-arrow-shape': 'triangle',
           'curve-style': 'bezier', 'arrow-scale': 0.75,
         },
       },
@@ -2786,10 +2790,6 @@ document.addEventListener('DOMContentLoaded', () => {
     else randomizeAutoSeq(activeTab);
   });
   document.getElementById('fit-btn').addEventListener('click', fitGraph);
-  document.getElementById('info-bar-close').addEventListener('click', () => {
-    const bar = document.getElementById('info-bar');
-    bar.classList.add('docked');
-  });
   document.getElementById('notes-save-btn').addEventListener('click', saveNotesPattern);
   document.getElementById('notes-save-new-btn').addEventListener('click', saveNewNotesPattern);
   document.getElementById('drum-save-btn').addEventListener('click', saveDrumPattern);

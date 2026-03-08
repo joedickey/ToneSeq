@@ -4,10 +4,14 @@
 // JAM SESSION — WebSocket connection, session UI, reconnect
 // ═══════════════════════════════════════════════════════════
 
+const JAM_DEBUG = location.search.includes('jam_debug');
+function jamLog(...args) { if (JAM_DEBUG) console.log('[JAM]', ...args); }
+
 const JAM_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const JAM_CODE_LENGTH = 5;
 const WS_RECONNECT_BASE = 1000;
 const WS_RECONNECT_MAX = 16000;
+const WS_MAX_RETRIES = 5;
 const WS_PORT = 8080;
 const WS_URL = `ws://${location.hostname || 'localhost'}:${WS_PORT}`;
 
@@ -34,6 +38,7 @@ let jamName = null;
 let jamColor = null;
 let jamReconnectDelay = WS_RECONNECT_BASE;
 let jamReconnectTimer = null;
+let jamReconnectCount = 0;
 let jamConnected = false;
 const jamPeers = new Map(); // tabId -> { name, color, state }
 let jamBroadcastTimer = null;
@@ -117,6 +122,8 @@ function connectToRoom(roomCode) {
   ws.onopen = () => {
     jamConnected = true;
     jamReconnectDelay = WS_RECONNECT_BASE;
+    jamReconnectCount = 0;
+    jamLog('connected to room', jamRoomCode, 'as', jamName);
     updateJamUI('connected');
     initClockSync();
 
@@ -148,13 +155,18 @@ function connectToRoom(roomCode) {
       return;
     }
     if (jamRoomCode) {
-      updateJamUI('reconnecting');
-      scheduleReconnect();
+      jamReconnectCount++;
+      if (jamReconnectCount > WS_MAX_RETRIES) {
+        updateJamUI('failed');
+      } else {
+        updateJamUI('reconnecting');
+        scheduleReconnect();
+      }
     }
   };
 
-  ws.onerror = (err) => {
-    console.error('Jam WebSocket error:', WS_URL, err);
+  ws.onerror = () => {
+    jamLog('connection error', WS_URL);
   };
 }
 
@@ -339,6 +351,7 @@ function teardownClockSync() {
 // ── Message handling ──────────────────────────────────────
 
 function handleJamMessage(msg) {
+  jamLog('recv', msg.type, msg.tabId || '');
   switch (msg.type) {
     case 'room-state':
       if (msg.tabs) {
@@ -465,13 +478,25 @@ function updateJamUI(state) {
         </div>
       `;
       panel.style.display = 'none'; // collapsed by default — dots show status
-      document.getElementById('jam-copy-btn').addEventListener('click', () => {
+      function copyRoomCode() {
+        const copyBtn = document.getElementById('jam-copy-btn');
         navigator.clipboard.writeText(jamRoomCode).then(() => {
-          const copyBtn = document.getElementById('jam-copy-btn');
-          copyBtn.textContent = 'Copied!';
-          setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+          if (copyBtn) { copyBtn.textContent = 'Copied!'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500); }
+        }).catch(() => {
+          // Fallback for non-secure contexts
+          const ta = document.createElement('textarea');
+          ta.value = jamRoomCode;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          if (copyBtn) { copyBtn.textContent = 'Copied!'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500); }
         });
-      });
+      }
+      document.getElementById('jam-copy-btn').addEventListener('click', copyRoomCode);
+      document.querySelector('.jam-code-display').addEventListener('click', copyRoomCode);
       document.getElementById('jam-leave-btn').addEventListener('click', disconnectJam);
       updatePeerDisplay();
       break;
@@ -480,7 +505,35 @@ function updateJamUI(state) {
       btn.classList.add('active');
       btn.innerHTML = 'Jam';
       if (dotsEl) { dotsEl.innerHTML = '<span class="jam-reconnecting-dot"></span>'; dotsEl.style.display = 'flex'; }
-      panel.style.display = 'none';
+      panel.innerHTML = `
+        <div class="jam-connected">
+          <span class="jam-code-display">${jamRoomCode}</span>
+          <span class="jam-status">reconnecting…</span>
+          <button id="jam-leave-btn" class="jam-action-btn jam-leave" title="Leave session">Leave</button>
+        </div>
+      `;
+      panel.style.display = 'flex';
+      document.getElementById('jam-leave-btn').addEventListener('click', disconnectJam);
+      break;
+
+    case 'failed':
+      btn.classList.add('active');
+      btn.innerHTML = 'Jam';
+      if (dotsEl) { dotsEl.innerHTML = ''; dotsEl.style.display = 'none'; }
+      panel.innerHTML = `
+        <div class="jam-connected">
+          <span class="jam-status">Connection failed</span>
+          <button id="jam-retry-btn" class="jam-action-btn" title="Retry">Retry</button>
+          <button id="jam-leave-btn" class="jam-action-btn jam-leave" title="Leave session">Leave</button>
+        </div>
+      `;
+      panel.style.display = 'flex';
+      document.getElementById('jam-retry-btn').addEventListener('click', () => {
+        jamReconnectCount = 0;
+        jamReconnectDelay = WS_RECONNECT_BASE;
+        connectToRoom(jamRoomCode);
+      });
+      document.getElementById('jam-leave-btn').addEventListener('click', disconnectJam);
       break;
 
     case 'full':
@@ -546,8 +599,8 @@ function toggleJamPanel() {
   const panel = document.getElementById('jam-panel');
   if (!panel) return;
 
-  if (jamConnected) {
-    // Toggle expanded panel showing room details
+  if (jamConnected || jamRoomCode) {
+    // Toggle expanded panel showing room details or reconnecting state
     panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
     return;
   }

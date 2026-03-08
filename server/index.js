@@ -9,6 +9,17 @@ const ROOM_TTL = 60 * 60 * 24; // 24 hours
 const MAX_TABS_PER_ROOM = 4;
 const HEARTBEAT_INTERVAL = 30000;
 
+// ── Logging ────────────────────────────────────────────────
+const LOG_LEVELS = { error: 0, warn: 1, info: 2, debug: 3 };
+const LOG_LEVEL = LOG_LEVELS[process.env.LOG_LEVEL || 'info'] ?? LOG_LEVELS.info;
+
+function log(level, msg, data) {
+  if (LOG_LEVELS[level] > LOG_LEVEL) return;
+  const entry = { ts: new Date().toISOString(), level, msg };
+  if (data) entry.data = data;
+  console[level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log'](JSON.stringify(entry));
+}
+
 // ── Redis helpers (take client as param) ───────────────────
 
 async function saveTabState(redisClient, roomCode, tabId, state) {
@@ -103,6 +114,7 @@ function createServer(options = {}) {
 
     const meta = { tabId: null, alive: true };
     room.set(ws, meta);
+    log('info', 'client connected', { room: roomCode, roomSize: room.size });
 
     ws.on('pong', () => { meta.alive = true; });
 
@@ -114,6 +126,7 @@ function createServer(options = {}) {
         return;
       }
 
+      log('debug', 'message received', { room: roomCode, type: msg.type, tabId: msg.tabId });
       // Broadcast first (low latency), then persist to Redis
       broadcast(localClients, roomCode, msg, ws);
 
@@ -147,12 +160,13 @@ function createServer(options = {}) {
           }
         }
       } catch (err) {
-        console.error('Redis error in message handler:', err.message);
+        log('error', 'Redis error in message handler', { room: roomCode, error: err.message });
       }
     });
 
     ws.on('close', async () => {
       room.delete(ws);
+      log('info', 'client disconnected', { room: roomCode, tabId: meta.tabId, roomSize: room.size });
       if (room.size === 0) localClients.delete(roomCode);
 
       if (meta.tabId) {
@@ -175,7 +189,7 @@ function createServer(options = {}) {
     })();
   });
 
-  console.log(`WebSocket server listening on port ${port}`);
+  log('info', 'WebSocket server listening', { port });
   return wss;
 }
 
@@ -185,7 +199,7 @@ async function main() {
   const redisUrl = process.env.REDIS_URL || DEFAULT_REDIS_URL;
   const pub = redis.createClient({ url: redisUrl });
   await pub.connect();
-  console.log(`Redis connected: ${redisUrl}`);
+  log('info', 'Redis connected', { url: redisUrl });
   const port = process.env.PORT || DEFAULT_PORT;
   const wss = createServer({ port, redisClient: pub });
   return wss;

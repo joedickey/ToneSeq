@@ -48,11 +48,6 @@ h1 {
 /* ─── Info Bar (sticky footer) ────────────────── */
 
 #info-bar {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  z-index: 100;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -60,17 +55,6 @@ h1 {
   padding: 6px 20px;
   background: #12122a;
   border-top: 1px solid #2a2a4a;
-  transition: transform 0.25s ease;
-}
-
-#info-bar.docked {
-  position: static;
-  border-top: none;
-  border-top: 1px solid #2a2a4a;
-}
-
-#info-bar.docked #info-bar-close {
-  display: none;
 }
 
 .info-links {
@@ -96,22 +80,6 @@ h1 {
   font-size: 0.7rem;
 }
 
-#info-bar-close {
-  position: absolute;
-  right: 12px;
-  background: none;
-  border: none;
-  color: #555;
-  font-size: 0.7rem;
-  cursor: pointer;
-  padding: 2px 6px;
-  font-family: inherit;
-  transition: color 0.15s;
-}
-
-#info-bar-close:hover {
-  color: #00d4aa;
-}
 
 .controls {
   display: flex;
@@ -722,6 +690,12 @@ h1 {
   font-weight: 700;
   color: #a78bfa;
   letter-spacing: 3px;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+
+.jam-code-display:hover {
+  color: #c4b5fd;
 }
 
 .jam-dots {
@@ -1328,4 +1302,10 @@ h1 {
   .adsr-group input[type="range"] { width: 60px; }
   .fx-sep { display: none; }
   #graph-wrap { min-height: 220px; }
+  /* Fix drum section bar overflow — allow scroll with fade hint */
+  .section-bar { gap: 2px; padding: 4px 8px; }
+  .seq-action-btn { margin-left: 2px; }
+  .drum-section-controls { padding-left: 4px; }
+  /* Fix Clear All overlap with controls */
+  #clear-btn { position: static; margin-left: auto; flex-shrink: 0; }
 }
