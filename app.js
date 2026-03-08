@@ -1180,13 +1180,13 @@ function buildLoop() {
 
     scheduleVisual(() => {
       highlightPlayhead(step);
-      // Pass nextPos (array position) so reverse-phase dist is calculated correctly
-      updateGraphPlayhead(step, nextPos);
-      highlightAutoBarPlayhead(step);
-      // Auto graph uses step values directly (no indexOf needed — nodes indexed 0-15)
-      autoActive.forEach(paramId => updateAutoGraphPlayhead(paramId, step, nextGridStep));
-      highlightDrumPlayhead(drumStep);
-      updateDrumGraphPlayhead(drumStep, drumNextSearchIdx);
+      if (!document.hidden) {
+        updateGraphPlayhead(step, nextPos);
+        highlightAutoBarPlayhead(step);
+        autoActive.forEach(paramId => updateAutoGraphPlayhead(paramId, step, nextGridStep));
+        highlightDrumPlayhead(drumStep);
+        updateDrumGraphPlayhead(drumStep, drumNextSearchIdx);
+      }
     }, time);
   }, '16n');
 }

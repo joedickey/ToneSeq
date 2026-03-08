@@ -8,7 +8,8 @@ const JAM_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const JAM_CODE_LENGTH = 5;
 const WS_RECONNECT_BASE = 1000;
 const WS_RECONNECT_MAX = 16000;
-const WS_URL = 'ws://localhost:8080';
+const WS_PORT = 8080;
+const WS_URL = `ws://${location.hostname || 'localhost'}:${WS_PORT}`;
 
 const CENOBITE_NAMES = [
   'Pinhead', 'Chatterer', 'Butterball', 'Channard',
