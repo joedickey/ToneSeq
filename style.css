@@ -724,6 +724,31 @@ h1 {
   letter-spacing: 3px;
 }
 
+.jam-dots {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.jam-reconnecting-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #a78bfa;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+.jam-status {
+  font-size: 0.75rem;
+  color: #9e9ec0;
+}
+
 .jam-peers {
   display: flex;
   gap: 8px;

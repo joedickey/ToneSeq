@@ -43,7 +43,12 @@ let jamBroadcastTimer = null;
 function getOrCreateTabId() {
   let id = sessionStorage.getItem('jamTabId');
   if (!id) {
-    id = crypto.randomUUID();
+    // crypto.randomUUID() requires secure context — fallback for plain HTTP
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+      id = crypto.randomUUID();
+    } else {
+      id = 'tab-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+    }
     sessionStorage.setItem('jamTabId', id);
   }
   return id;
@@ -103,7 +108,10 @@ function connectToRoom(roomCode) {
   jamPeers.clear();
   sessionStorage.setItem('jamRoom', jamRoomCode);
 
-  const ws = new WebSocket(`${WS_URL}?room=${jamRoomCode}`);
+  updateJamUI('connecting');
+
+  const wsUrl = `${WS_URL}?room=${jamRoomCode}`;
+  const ws = new WebSocket(wsUrl);
   jamWs = ws;
 
   ws.onopen = () => {
@@ -145,8 +153,8 @@ function connectToRoom(roomCode) {
     }
   };
 
-  ws.onerror = () => {
-    // onclose will fire after this
+  ws.onerror = (err) => {
+    console.error('Jam WebSocket error:', WS_URL, err);
   };
 }
 
@@ -339,6 +347,7 @@ function handleJamMessage(msg) {
             jamPeers.set(id, data);
           }
         }
+        resolveColorCollision();
         updatePeerDisplay();
       }
       break;
@@ -371,13 +380,19 @@ function handleJamMessage(msg) {
 // ── Peer display ──────────────────────────────────────────
 
 function updatePeerDisplay() {
+  // Update dots next to Jam button (always visible when connected)
+  const dotsContainer = document.getElementById('jam-dots');
+  if (dotsContainer) {
+    let dots = `<span class="jam-peer-dot" style="--peer-color: ${jamColor};"></span>`;
+    for (const [, peer] of jamPeers) {
+      dots += `<span class="jam-peer-dot" style="--peer-color: ${peer.color || '#777'};"></span>`;
+    }
+    dotsContainer.innerHTML = dots;
+  }
+
+  // Update expanded peer list in panel
   const container = document.getElementById('jam-peers');
   if (!container) return;
-
-  if (jamPeers.size === 0) {
-    container.innerHTML = '';
-    return;
-  }
 
   let html = '';
   for (const [, peer] of jamPeers) {
@@ -390,17 +405,54 @@ function updatePeerDisplay() {
   container.innerHTML = html;
 }
 
+function resolveColorCollision() {
+  const takenColors = new Set([...jamPeers.values()].map(p => p.color));
+  if (takenColors.has(jamColor)) {
+    const available = JAM_COLORS.filter(c => !takenColors.has(c));
+    if (available.length > 0) {
+      jamColor = available[Math.floor(Math.random() * available.length)];
+      sessionStorage.setItem('jamColor', jamColor);
+      // Re-announce with new color
+      if (jamWs && jamConnected) {
+        jamWs.send(JSON.stringify({
+          type: 'announce',
+          tabId: jamTabId,
+          name: jamName,
+          color: jamColor,
+          state: typeof serializeSession === 'function' ? serializeSession() : null
+        }));
+      }
+    }
+  }
+}
+
 // ── UI ───────────────────────────────────────────────────
 
 function updateJamUI(state) {
   const btn = document.getElementById('jam-btn');
   const panel = document.getElementById('jam-panel');
+  const dotsEl = document.getElementById('jam-dots');
   if (!btn || !panel) return;
 
   switch (state) {
+    case 'connecting':
+      btn.classList.add('active');
+      btn.innerHTML = 'Jam';
+      if (dotsEl) dotsEl.innerHTML = '';
+      panel.innerHTML = `
+        <div class="jam-connected">
+          <span class="jam-code-display">${jamRoomCode}</span>
+          <span class="jam-status">connecting…</span>
+        </div>
+      `;
+      panel.style.display = 'flex';
+      break;
+
     case 'connected':
       btn.classList.add('active');
-      btn.textContent = 'Jam';
+      btn.innerHTML = 'Jam';
+      if (dotsEl) dotsEl.style.display = 'flex';
+      // Build expanded panel content
       panel.innerHTML = `
         <div class="jam-connected">
           <span class="jam-code-display">${jamRoomCode}</span>
@@ -412,38 +464,42 @@ function updateJamUI(state) {
           <button id="jam-leave-btn" class="jam-action-btn jam-leave" title="Leave session">Leave</button>
         </div>
       `;
-      panel.style.display = 'flex';
+      panel.style.display = 'none'; // collapsed by default — dots show status
       document.getElementById('jam-copy-btn').addEventListener('click', () => {
         navigator.clipboard.writeText(jamRoomCode).then(() => {
-          const btn = document.getElementById('jam-copy-btn');
-          btn.textContent = 'Copied!';
-          setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+          const copyBtn = document.getElementById('jam-copy-btn');
+          copyBtn.textContent = 'Copied!';
+          setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
         });
       });
       document.getElementById('jam-leave-btn').addEventListener('click', disconnectJam);
+      updatePeerDisplay();
       break;
 
     case 'reconnecting':
       btn.classList.add('active');
-      btn.textContent = 'Reconnecting...';
+      btn.innerHTML = 'Jam';
+      if (dotsEl) { dotsEl.innerHTML = '<span class="jam-reconnecting-dot"></span>'; dotsEl.style.display = 'flex'; }
+      panel.style.display = 'none';
       break;
 
     case 'full':
       btn.classList.remove('active');
-      btn.textContent = 'Jam';
+      btn.innerHTML = 'Jam';
+      if (dotsEl) { dotsEl.innerHTML = ''; dotsEl.style.display = 'none'; }
       panel.innerHTML = `<div class="jam-error">Room is full (max 4)</div>`;
       panel.style.display = 'flex';
       setTimeout(() => {
         panel.style.display = 'none';
         panel.innerHTML = '';
-        showJamOptions(panel);
       }, 3000);
       break;
 
     case 'disconnected':
     default:
       btn.classList.remove('active');
-      btn.textContent = 'Jam';
+      btn.innerHTML = 'Jam';
+      if (dotsEl) { dotsEl.innerHTML = ''; dotsEl.style.display = 'none'; }
       panel.style.display = 'none';
       panel.innerHTML = '';
       break;
@@ -491,7 +547,8 @@ function toggleJamPanel() {
   if (!panel) return;
 
   if (jamConnected) {
-    // Already connected — clicking toggle should do nothing, panel stays visible
+    // Toggle expanded panel showing room details
+    panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
     return;
   }
 
@@ -515,9 +572,9 @@ function initJam() {
   document.addEventListener('click', (e) => {
     const panel = document.getElementById('jam-panel');
     const control = document.querySelector('.jam-control');
-    if (panel && panel.style.display === 'flex' && !jamConnected && !control.contains(e.target)) {
+    if (panel && panel.style.display === 'flex' && !control.contains(e.target)) {
       panel.style.display = 'none';
-      panel.innerHTML = '';
+      if (!jamConnected) panel.innerHTML = '';
     }
   });
 
