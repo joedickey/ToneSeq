@@ -240,14 +240,20 @@ function handleRemoteTransport(msg) {
         if (typeof play === 'function') play();
         break;
       case 'request-sync':
-        // New tab requesting current transport state
-        if (typeof isPlaying !== 'undefined' && isPlaying) {
-          jamSendTransport('sync-state', {
-            playing: true,
-            step: typeof seqPosition !== 'undefined' ? seqPosition : 0,
-            transportPos: Tone.Transport.seconds,
-            bpm: Tone.Transport.bpm.value
-          });
+        // New tab requesting current transport state — send directly
+        // (bypass jamSendTransport since jamTransportRemote is set)
+        if (typeof isPlaying !== 'undefined' && isPlaying && jamWs) {
+          jamWs.send(JSON.stringify({
+            type: 'transport',
+            tabId: jamTabId,
+            action: 'sync-state',
+            value: {
+              playing: true,
+              step: typeof seqPosition !== 'undefined' ? seqPosition : 0,
+              transportPos: Tone.Transport.seconds,
+              bpm: Tone.Transport.bpm.value
+            }
+          }));
         }
         break;
       case 'sync-state':
