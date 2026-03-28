@@ -192,7 +192,6 @@ class JamSync {
     this._leaderTabId = null;
     this._leaderElectionTimer = null;
     this._transportRemote = false;
-    this._awaitingFirstBeatSync = false;
   }
 
   get isLeader() { return this._isLeader; }
@@ -216,17 +215,9 @@ class JamSync {
           }
           break;
         case 'beat-sync':
+          // Local (same-device) beat-sync: only correct when drift is significant
           if (!this._isLeader && msg.tabId !== this.conn.tabId && typeof Tone !== 'undefined') {
-            if (this._awaitingFirstBeatSync) {
-              // New joiner: snap to leader on first beat-sync
-              this._awaitingFirstBeatSync = false;
-              if (typeof setSeqPosition === 'function') {
-                setSeqPosition(msg.step);
-              }
-              jamLog('local beat-sync snap to step', msg.step);
-            } else {
-              this._nudgeTransport(msg);
-            }
+            this._nudgeTransport(msg);
           }
           break;
         case 'leader-gone':
@@ -253,14 +244,14 @@ class JamSync {
     }, 200);
   }
 
-  broadcastBeatSync(step) {
+  broadcastBeatSync(step, position, arrayLength) {
     if (!this._isLeader || !this._clockChannel) return;
     this._clockChannel.postMessage({
       type: 'beat-sync',
       tabId: this.conn.tabId,
       step,
-      transportPos: Tone.Transport.seconds,
-      bpm: Tone.Transport.bpm.value
+      position,
+      arrayLength
     });
 
     // Also send over WebSocket for remote tabs (every step)
@@ -324,18 +315,9 @@ class JamSync {
           }
           break;
         case 'beat-sync':
-          // Remote beat-sync from WS (cross-device)
-          if (typeof Tone !== 'undefined') {
-            if (this._awaitingFirstBeatSync) {
-              this._awaitingFirstBeatSync = false;
-              if (typeof setSeqPosition === 'function') {
-                setSeqPosition(msg.step);
-              }
-              jamLog('remote beat-sync snap to step', msg.step);
-            } else {
-              this._nudgeTransport(msg);
-            }
-          }
+          // Remote beat-sync from WS (cross-device): no continuous nudging.
+          // Same BPM keeps tabs approximately in sync after initial join snap.
+          // Nudging every step across network latency causes visible jumpiness.
           break;
       }
     } finally {
@@ -354,21 +336,16 @@ class JamSync {
         const bpmEl = document.getElementById('bpm');
         if (bpmEl) bpmEl.value = Math.round(transport.bpm);
       }
-      // Start playback, then wait for first beat-sync to snap position
-      this._awaitingFirstBeatSync = true;
+      // Start playback at the leader's step position — play(fromStep)
+      // aligns both the step counter and transport clock phase
+      this._transportRemote = true;
       if (typeof play === 'function' && typeof isPlaying !== 'undefined' && !isPlaying) {
-        play().then(() => {
-          // If no beat-sync arrives within 500ms, use the room-state step
-          setTimeout(() => {
-            if (this._awaitingFirstBeatSync) {
-              this._awaitingFirstBeatSync = false;
-              if (typeof setSeqPosition === 'function' && transport.step != null) {
-                setSeqPosition(transport.step);
-              }
-              jamLog('fallback: used room-state step', transport.step);
-            }
-          }, 500);
+        play(transport.step).then(() => {
+          this._transportRemote = false;
+          jamLog('joined playing session at step', transport.step);
         });
+      } else {
+        this._transportRemote = false;
       }
     }
   }
@@ -380,11 +357,7 @@ class JamSync {
       if (bpmEl) bpmEl.value = Math.round(value.bpm);
     }
     if (typeof play === 'function' && typeof isPlaying !== 'undefined' && !isPlaying) {
-      play().then(() => {
-        if (typeof setSeqPosition === 'function' && value.step != null) {
-          setSeqPosition(value.step);
-        }
-      });
+      play(value.step);
     } else if (typeof setSeqPosition === 'function' && value.step != null) {
       setSeqPosition(value.step);
     }
@@ -392,11 +365,18 @@ class JamSync {
 
   _nudgeTransport(msg) {
     if (typeof Tone === 'undefined' || !Tone.Transport) return;
-    if (typeof isPlaying !== 'undefined' && isPlaying && typeof seqPosition !== 'undefined') {
-      const stepDiff = Math.abs(msg.step - seqPosition);
-      if (stepDiff > 0 && stepDiff < 15 && typeof setSeqPosition === 'function') {
-        setSeqPosition(msg.step);
-      }
+    if (typeof isPlaying === 'undefined' || !isPlaying) return;
+    if (typeof seqPosition === 'undefined') return;
+    // Only nudge when playback modes match (same step array length).
+    // Different modes produce different step sequences — nudging across
+    // modes forces the leader's pattern onto the follower.
+    if (typeof activeStepArray !== 'undefined' && msg.arrayLength !== activeStepArray.length) return;
+    // Compare loop positions (not grid columns) for mode-independent sync
+    const posDiff = Math.abs(msg.position - seqPosition);
+    const wrapThreshold = (msg.arrayLength || 16) - 2;
+    if (posDiff >= 2 && posDiff < wrapThreshold && typeof setSeqPosition === 'function') {
+      setSeqPosition(msg.position);
+      jamLog('nudge correction', { from: seqPosition, to: msg.position, drift: posDiff });
     }
   }
 
@@ -410,7 +390,6 @@ class JamSync {
     }
     this._isLeader = false;
     this._leaderTabId = null;
-    this._awaitingFirstBeatSync = false;
   }
 }
 
@@ -440,12 +419,16 @@ class JamUI {
   updatePeerDisplay(selfColor, peers) {
     const dotsContainer = document.getElementById('jam-dots');
     if (dotsContainer) {
-      let dots = `<span class="jam-peer-dot" style="--peer-color: ${selfColor};"></span>`;
+      let dots = `<span class="jam-peer-dot jam-self-dot" style="--peer-color: ${selfColor};"></span>`;
       for (const [, peer] of peers) {
         dots += `<span class="jam-peer-dot" style="--peer-color: ${peer.color || '#777'};"></span>`;
       }
       dotsContainer.innerHTML = dots;
     }
+
+    // Tint Jam button border to match self color
+    const btn = document.getElementById('jam-btn');
+    if (btn) btn.style.borderColor = selfColor;
 
     const container = document.getElementById('jam-peers');
     if (!container) return;
@@ -508,7 +491,7 @@ class JamUI {
           <div class="jam-connected">
             <span class="jam-code-display">${connection.roomCode}</span>
             <span class="jam-self" style="--peer-color: ${connection.color};">
-              <span class="jam-peer-dot"></span>${connection.name}
+              <span class="jam-peer-dot jam-self-dot"></span>${connection.name} <span class="jam-you-tag">you</span>
             </span>
             <div id="jam-peers" class="jam-peers"></div>
             <button id="jam-copy-btn" class="jam-action-btn" title="Copy code">Copy</button>
@@ -588,6 +571,7 @@ class JamUI {
       default:
         btn.classList.remove('active');
         btn.innerHTML = 'Jam';
+        btn.style.borderColor = '';
         if (dotsEl) { dotsEl.innerHTML = ''; dotsEl.style.display = 'none'; }
         panel.style.display = 'none';
         panel.innerHTML = '';
@@ -803,7 +787,7 @@ const session = new JamSession();
 // Expose for app.js integration (global function API preserved)
 window.jamSession = session;
 window.jamSendTransport = (action, value) => session.sync.sendTransport(action, value);
-window.broadcastBeatSync = (step) => session.sync.broadcastBeatSync(step);
+window.broadcastBeatSync = (step, position, arrayLength) => session.sync.broadcastBeatSync(step, position, arrayLength);
 window.scheduleJamBroadcast = () => session.scheduleStateBroadcast();
 window.disconnectJam = () => session.disconnect();
 window.connectToRoom = (code) => session.connect(code);

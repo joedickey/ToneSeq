@@ -1176,7 +1176,7 @@ function buildLoop() {
     }
 
     // Local clock sync: leader broadcasts beat position for follower tabs
-    if (typeof broadcastBeatSync === 'function') broadcastBeatSync(step);
+    if (typeof broadcastBeatSync === 'function') broadcastBeatSync(step, seqPosition, activeStepArray.length);
 
     scheduleVisual(() => {
       highlightPlayhead(step);
@@ -1288,20 +1288,30 @@ function scheduleVisual(cb, time) {
   requestAnimationFrame(cb);
 }
 
-function setSeqPosition(step) {
-  if (step >= 0 && step < 16) {
-    seqPosition = step;
+function setSeqPosition(pos) {
+  if (pos >= 0 && pos < activeStepArray.length) {
+    seqPosition = pos;
     prevStep = -1;
   }
 }
 
-async function play() {
+async function play(fromStep) {
   if (isPlaying) return;
   await Tone.start();
   Tone.Transport.bpm.value = Number(document.getElementById('bpm').value) || 120;
   // Restart metronome loop so beat 1 always lands on the first tick of playback
   if (metronomeEnabled) startMetronomeLoop();
-  Tone.Transport.start();
+  if (fromStep != null && fromStep > 0 && fromStep < STEPS) {
+    // Join mid-sequence: align transport clock to the step position so audio
+    // phase matches the leader (eliminates sub-step audible delay on join)
+    seqPosition = fromStep;
+    drumSeqPosition = fromStep;
+    prevStep = -1;
+    const stepDuration = 60 / (Tone.Transport.bpm.value * 4);
+    Tone.Transport.start(undefined, fromStep * stepDuration);
+  } else {
+    Tone.Transport.start();
+  }
   isPlaying = true;
   if (typeof jamSendTransport === 'function') jamSendTransport('play', seqPosition);
 }

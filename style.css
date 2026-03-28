@@ -773,6 +773,18 @@ h1 {
   background: var(--peer-color, #777);
 }
 
+.jam-self-dot {
+  width: 10px;
+  height: 10px;
+  box-shadow: 0 0 0 2px #0d0d1a, 0 0 0 3px var(--peer-color, #777);
+}
+
+.jam-you-tag {
+  font-size: 0.6rem;
+  opacity: 0.5;
+  font-style: italic;
+}
+
 .jam-connected {
   display: flex;
   align-items: center;
