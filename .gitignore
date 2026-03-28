@@ -1,5 +1,12 @@
 .mcp.json
+node_modules/
 server/node_modules/
 server/.env
 server/collaborative-jam-implementation-plan.md
 server/AUDIO-SPIKE-RESULTS.md
+
+# Claude Code local artifacts
+.claude/settings.local.json
+.agents/
+.claude/skills/
+skills-lock.json

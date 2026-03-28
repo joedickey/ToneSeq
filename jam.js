@@ -53,6 +53,13 @@ class JamConnection {
     this._handlers.get(type).push(callback);
   }
 
+  off(type, callback) {
+    const handlers = this._handlers.get(type);
+    if (!handlers) return;
+    const idx = handlers.indexOf(callback);
+    if (idx !== -1) handlers.splice(idx, 1);
+  }
+
   _emit(type, data) {
     const handlers = this._handlers.get(type);
     if (handlers) handlers.forEach(h => h(data));

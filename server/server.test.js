@@ -47,11 +47,14 @@ function collect(ws, duration = 500) {
 }
 
 async function cleanRoom(roomCode) {
-  // Clean both old-format and new hash-tagged keys
-  const oldKeys = await redisClient.keys(`room:${roomCode}:*`);
-  const newKeys = await redisClient.keys(`{room:${roomCode}}:*`);
-  const allKeys = [...oldKeys, ...newKeys];
-  if (allKeys.length) await redisClient.del(allKeys);
+  // Use SMEMBERS + explicit key construction instead of KEYS (O(N) scan, blocked in Cluster)
+  const tabIds = await redisClient.sMembers(`{room:${roomCode}}:tabs`);
+  const keys = [
+    `{room:${roomCode}}:tabs`,
+    `{room:${roomCode}}:transport`,
+    ...tabIds.map(id => `{room:${roomCode}}:tab:${id}`)
+  ];
+  await redisClient.del(keys);
 }
 
 describe('WebSocket Relay Server', () => {

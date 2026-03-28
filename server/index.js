@@ -33,6 +33,42 @@ function broadcast(localClients, roomCode, message, excludeWs) {
   }
 }
 
+// ── Message handlers (msg, ctx) → Promise ─────────────────
+
+const messageHandlers = {
+  announce: async (msg, { room, meta }) => {
+    if (!msg.tabId) return;
+    meta.tabId = msg.tabId;
+    await room.addTab(msg.tabId, {
+      tabId: msg.tabId,
+      name: msg.name,
+      color: msg.color,
+      state: msg.state || null
+    });
+  },
+
+  'state-update': async (msg, { room }) => {
+    if (!msg.tabId) return;
+    await room.updateTabState(msg.tabId, msg.state);
+  },
+
+  edit: async (msg, { room }) => {
+    if (!msg.source) return;
+    await room.updateTabLastEdit(msg.source, msg);
+  },
+
+  transport: async (msg, { room }) => {
+    const transportActions = {
+      play:        () => room.updateTransportField('$.playing', true),
+      stop:        () => room.updateTransportField('$.playing', false),
+      bpm:         () => room.updateTransportField('$.bpm', msg.value),
+      'beat-sync': () => room.updateTransportStep(msg.step),
+    };
+    const action = transportActions[msg.action];
+    if (action) await action();
+  },
+};
+
 // ── Server factory ─────────────────────────────────────────
 
 function createServer(options = {}) {
@@ -94,38 +130,13 @@ function createServer(options = {}) {
       // Broadcast first (low latency), then persist to Redis
       broadcast(localClients, roomCode, msg, ws);
 
-      try {
-        if (msg.type === 'announce' && msg.tabId) {
-          meta.tabId = msg.tabId;
-          await room.addTab(msg.tabId, {
-            tabId: msg.tabId,
-            name: msg.name,
-            color: msg.color,
-            state: msg.state || null
-          });
+      const handler = messageHandlers[msg.type];
+      if (handler) {
+        try {
+          await handler(msg, { room, meta });
+        } catch (err) {
+          log('error', 'Redis error in message handler', { room: roomCode, type: msg.type, error: err.message });
         }
-
-        if (msg.type === 'state-update' && msg.tabId) {
-          await room.updateTabState(msg.tabId, msg.state);
-        }
-
-        if (msg.type === 'edit' && msg.source) {
-          await room.updateTabLastEdit(msg.source, msg);
-        }
-
-        if (msg.type === 'transport') {
-          if (msg.action === 'play') {
-            await room.updateTransportField('$.playing', true);
-          } else if (msg.action === 'stop') {
-            await room.updateTransportField('$.playing', false);
-          } else if (msg.action === 'bpm') {
-            await room.updateTransportField('$.bpm', msg.value);
-          } else if (msg.action === 'beat-sync') {
-            await room.updateTransportStep(msg.step);
-          }
-        }
-      } catch (err) {
-        log('error', 'Redis error in message handler', { room: roomCode, error: err.message });
       }
     });
 
