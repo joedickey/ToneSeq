@@ -2,10 +2,10 @@
 
 const { WebSocketServer } = require('ws');
 const redis = require('redis');
+const { Room } = require('./room');
 
 const DEFAULT_PORT = 8080;
 const DEFAULT_REDIS_URL = 'redis://localhost:6379';
-const ROOM_TTL = 60 * 60 * 24; // 24 hours
 const MAX_TABS_PER_ROOM = 4;
 const HEARTBEAT_INTERVAL = 30000;
 
@@ -18,44 +18,6 @@ function log(level, msg, data) {
   const entry = { ts: new Date().toISOString(), level, msg };
   if (data) entry.data = data;
   console[level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log'](JSON.stringify(entry));
-}
-
-// ── Redis helpers (take client as param) ───────────────────
-
-async function saveTabState(redisClient, roomCode, tabId, state) {
-  const key = `room:${roomCode}:tab:${tabId}`;
-  await redisClient.set(key, JSON.stringify(state));
-  await redisClient.expire(key, ROOM_TTL);
-  await redisClient.expire(`room:${roomCode}:tabs`, ROOM_TTL);
-}
-
-async function getTabState(redisClient, roomCode, tabId) {
-  const raw = await redisClient.get(`room:${roomCode}:tab:${tabId}`);
-  return raw ? JSON.parse(raw) : null;
-}
-
-async function addTabToRoom(redisClient, roomCode, tabId) {
-  await redisClient.sAdd(`room:${roomCode}:tabs`, tabId);
-  await redisClient.expire(`room:${roomCode}:tabs`, ROOM_TTL);
-}
-
-async function removeTabFromRoom(redisClient, roomCode, tabId) {
-  await redisClient.sRem(`room:${roomCode}:tabs`, tabId);
-  await redisClient.del(`room:${roomCode}:tab:${tabId}`);
-}
-
-async function getRoomTabs(redisClient, roomCode) {
-  return await redisClient.sMembers(`room:${roomCode}:tabs`);
-}
-
-async function getRoomState(redisClient, roomCode) {
-  const tabIds = await getRoomTabs(redisClient, roomCode);
-  const tabs = {};
-  for (const tabId of tabIds) {
-    const state = await getTabState(redisClient, roomCode, tabId);
-    if (state) tabs[tabId] = state;
-  }
-  return tabs;
 }
 
 // ── Broadcast to local WebSocket clients ───────────────────
@@ -105,16 +67,18 @@ function createServer(options = {}) {
     }
 
     if (!localClients.has(roomCode)) localClients.set(roomCode, new Map());
-    const room = localClients.get(roomCode);
+    const roomMap = localClients.get(roomCode);
 
-    if (room.size >= MAX_TABS_PER_ROOM) {
+    if (roomMap.size >= MAX_TABS_PER_ROOM) {
       ws.close(4002, 'Room full');
       return;
     }
 
     const meta = { tabId: null, alive: true };
-    room.set(ws, meta);
-    log('info', 'client connected', { room: roomCode, roomSize: room.size });
+    roomMap.set(ws, meta);
+    log('info', 'client connected', { room: roomCode, roomSize: roomMap.size });
+
+    const room = new Room(pub, roomCode);
 
     ws.on('pong', () => { meta.alive = true; });
 
@@ -133,30 +97,31 @@ function createServer(options = {}) {
       try {
         if (msg.type === 'announce' && msg.tabId) {
           meta.tabId = msg.tabId;
-          await addTabToRoom(pub, roomCode, msg.tabId);
-          if (msg.state) {
-            await saveTabState(pub, roomCode, msg.tabId, {
-              tabId: msg.tabId,
-              name: msg.name,
-              color: msg.color,
-              state: msg.state
-            });
-          }
+          await room.addTab(msg.tabId, {
+            tabId: msg.tabId,
+            name: msg.name,
+            color: msg.color,
+            state: msg.state || null
+          });
         }
 
         if (msg.type === 'state-update' && msg.tabId) {
-          const existing = await getTabState(pub, roomCode, msg.tabId);
-          if (existing) {
-            existing.state = msg.state;
-            await saveTabState(pub, roomCode, msg.tabId, existing);
-          }
+          await room.updateTabState(msg.tabId, msg.state);
         }
 
         if (msg.type === 'edit' && msg.source) {
-          const existing = await getTabState(pub, roomCode, msg.source);
-          if (existing) {
-            existing.lastEdit = msg;
-            await saveTabState(pub, roomCode, msg.source, existing);
+          await room.updateTabLastEdit(msg.source, msg);
+        }
+
+        if (msg.type === 'transport') {
+          if (msg.action === 'play') {
+            await room.updateTransportField('$.playing', true);
+          } else if (msg.action === 'stop') {
+            await room.updateTransportField('$.playing', false);
+          } else if (msg.action === 'bpm') {
+            await room.updateTransportField('$.bpm', msg.value);
+          } else if (msg.action === 'beat-sync') {
+            await room.updateTransportStep(msg.step);
           }
         }
       } catch (err) {
@@ -165,15 +130,15 @@ function createServer(options = {}) {
     });
 
     ws.on('close', async () => {
-      room.delete(ws);
-      log('info', 'client disconnected', { room: roomCode, tabId: meta.tabId, roomSize: room.size });
-      if (room.size === 0) localClients.delete(roomCode);
+      roomMap.delete(ws);
+      log('info', 'client disconnected', { room: roomCode, tabId: meta.tabId, roomSize: roomMap.size });
+      if (roomMap.size === 0) localClients.delete(roomCode);
 
       if (meta.tabId) {
         const leaveMsg = { type: 'leave', tabId: meta.tabId };
         broadcast(localClients, roomCode, leaveMsg);
         try {
-          await removeTabFromRoom(pub, roomCode, meta.tabId);
+          await room.removeTab(meta.tabId);
         } catch (err) {
           log('error', 'Redis error removing tab on disconnect', { room: roomCode, tabId: meta.tabId, error: err.message });
         }
@@ -182,13 +147,34 @@ function createServer(options = {}) {
 
     ws.on('error', () => ws.terminate());
 
-    // Send existing room state to new joiner
+    // Send existing room state to new joiner, filtered to only active connections
     (async () => {
-      const roomState = await getRoomState(pub, roomCode);
-      if (Object.keys(roomState).length > 0) {
+      const roomState = await room.getAllTabs();
+      // Filter to only tabs with active WebSocket connections
+      const activeTabIds = new Set();
+      if (localClients.has(roomCode)) {
+        for (const [, m] of localClients.get(roomCode)) {
+          if (m.tabId) activeTabIds.add(m.tabId);
+        }
+      }
+      const filteredState = {};
+      for (const [tabId, data] of Object.entries(roomState)) {
+        if (activeTabIds.has(tabId)) {
+          filteredState[tabId] = data;
+        } else {
+          // Clean up orphaned Redis entry
+          room.removeTab(tabId).catch(() => {});
+        }
+      }
+
+      // Always include transport state for new joiners
+      const transport = await room.getTransport();
+
+      if (Object.keys(filteredState).length > 0 || transport) {
         ws.send(JSON.stringify({
           type: 'room-state',
-          tabs: roomState
+          tabs: filteredState,
+          transport: transport || null
         }));
       }
     })();
@@ -202,7 +188,13 @@ function createServer(options = {}) {
 
 async function main() {
   const redisUrl = process.env.REDIS_URL || DEFAULT_REDIS_URL;
-  const pub = redis.createClient({ url: redisUrl });
+  const pub = redis.createClient({
+    url: redisUrl,
+    socket: {
+      connectTimeout: 5000,
+      reconnectStrategy: (retries) => Math.min(retries * 500, 5000)
+    }
+  });
   await pub.connect();
   log('info', 'Redis connected', { url: redisUrl });
   const port = process.env.PORT || DEFAULT_PORT;
@@ -217,4 +209,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, saveTabState, getTabState, addTabToRoom, removeTabFromRoom, getRoomTabs, getRoomState };
+module.exports = { createServer, Room };

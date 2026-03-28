@@ -2,7 +2,10 @@
 
 // ═══════════════════════════════════════════════════════════
 // JAM SESSION — WebSocket connection, session UI, reconnect
+// Decomposed into JamConnection, JamSync, JamUI, JamSession
 // ═══════════════════════════════════════════════════════════
+
+(function () {
 
 const JAM_DEBUG = location.search.includes('jam_debug');
 function jamLog(...args) { if (JAM_DEBUG) console.log('[JAM]', ...args); }
@@ -29,655 +32,788 @@ const JAM_COLORS = [
   '#A78BFA', '#FB923C', '#34D399'
 ];
 
-// ── State ────────────────────────────────────────────────
+// ── JamConnection — WebSocket lifecycle ─────────────────────
 
-let jamWs = null;
-let jamRoomCode = null;
-let jamTabId = null;
-let jamName = null;
-let jamColor = null;
-let jamReconnectDelay = WS_RECONNECT_BASE;
-let jamReconnectTimer = null;
-let jamReconnectCount = 0;
-let jamConnected = false;
-const jamPeers = new Map(); // tabId -> { name, color, state }
-let jamBroadcastTimer = null;
+class JamConnection {
+  constructor() {
+    this.ws = null;
+    this.roomCode = null;
+    this.tabId = null;
+    this.name = null;
+    this.color = null;
+    this.connected = false;
+    this._reconnectDelay = WS_RECONNECT_BASE;
+    this._reconnectTimer = null;
+    this._reconnectCount = 0;
+    this._handlers = new Map(); // type -> [callback]
+  }
 
-// ── Tab identity ─────────────────────────────────────────
+  on(type, callback) {
+    if (!this._handlers.has(type)) this._handlers.set(type, []);
+    this._handlers.get(type).push(callback);
+  }
 
-function getOrCreateTabId() {
-  let id = sessionStorage.getItem('jamTabId');
-  if (!id) {
-    // crypto.randomUUID() requires secure context — fallback for plain HTTP
+  _emit(type, data) {
+    const handlers = this._handlers.get(type);
+    if (handlers) handlers.forEach(h => h(data));
+  }
+
+  _generateTabId() {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-      id = crypto.randomUUID();
-    } else {
-      id = 'tab-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+      return crypto.randomUUID();
     }
-    sessionStorage.setItem('jamTabId', id);
-  }
-  return id;
-}
-
-// ── Identity assignment ─────────────────────────────────
-
-function getOrCreateIdentity() {
-  let name = sessionStorage.getItem('jamName');
-  let color = sessionStorage.getItem('jamColor');
-  if (!name) {
-    name = pickAvailableName();
-    sessionStorage.setItem('jamName', name);
-  }
-  if (!color) {
-    color = pickAvailableColor();
-    sessionStorage.setItem('jamColor', color);
-  }
-  jamName = name;
-  jamColor = color;
-}
-
-function pickAvailableName() {
-  const taken = new Set([...jamPeers.values()].map(p => p.name));
-  const available = CENOBITE_NAMES.filter(n => !taken.has(n));
-  const pool = available.length > 0 ? available : CENOBITE_NAMES;
-  return pool[Math.floor(Math.random() * pool.length)];
-}
-
-function pickAvailableColor() {
-  const taken = new Set([...jamPeers.values()].map(p => p.color));
-  const available = JAM_COLORS.filter(c => !taken.has(c));
-  const pool = available.length > 0 ? available : JAM_COLORS;
-  return pool[Math.floor(Math.random() * pool.length)];
-}
-
-// ── Join code generation ─────────────────────────────────
-
-function generateJamCode() {
-  let code = '';
-  for (let i = 0; i < JAM_CODE_LENGTH; i++) {
-    code += JAM_CODE_CHARS[Math.floor(Math.random() * JAM_CODE_CHARS.length)];
-  }
-  return code;
-}
-
-// ── WebSocket connection ─────────────────────────────────
-
-function connectToRoom(roomCode) {
-  if (jamWs && (jamWs.readyState === WebSocket.OPEN || jamWs.readyState === WebSocket.CONNECTING)) {
-    jamWs.close();
+    return 'tab-' + Date.now() + '-' + Math.random().toString(36).slice(2);
   }
 
-  jamRoomCode = roomCode.toUpperCase();
-  jamTabId = getOrCreateTabId();
-  getOrCreateIdentity();
-  jamPeers.clear();
-  sessionStorage.setItem('jamRoom', jamRoomCode);
-
-  updateJamUI('connecting');
-
-  const wsUrl = `${WS_URL}?room=${jamRoomCode}`;
-  const ws = new WebSocket(wsUrl);
-  jamWs = ws;
-
-  ws.onopen = () => {
-    jamConnected = true;
-    jamReconnectDelay = WS_RECONNECT_BASE;
-    jamReconnectCount = 0;
-    jamLog('connected to room', jamRoomCode, 'as', jamName);
-    updateJamUI('connected');
-    initClockSync();
-
-    // Announce this tab to the room
-    ws.send(JSON.stringify({
-      type: 'announce',
-      tabId: jamTabId,
-      name: jamName,
-      color: jamColor,
-      state: typeof serializeSession === 'function' ? serializeSession() : null
-    }));
-
-    // Request current transport state from peers
-    setTimeout(() => {
-      jamSendTransport('request-sync');
-    }, 300);
-  };
-
-  ws.onmessage = (e) => {
-    let msg;
-    try {
-      msg = JSON.parse(e.data);
-    } catch {
-      return;
+  _initIdentity(peers) {
+    let name = sessionStorage.getItem('jamName');
+    let color = sessionStorage.getItem('jamColor');
+    if (!name) {
+      const taken = new Set([...peers.values()].map(p => p.name));
+      const available = CENOBITE_NAMES.filter(n => !taken.has(n));
+      const pool = available.length > 0 ? available : CENOBITE_NAMES;
+      name = pool[Math.floor(Math.random() * pool.length)];
+      sessionStorage.setItem('jamName', name);
     }
-    handleJamMessage(msg);
-  };
-
-  ws.onclose = (e) => {
-    jamConnected = false;
-    if (e.code === 4002) {
-      updateJamUI('full');
-      sessionStorage.removeItem('jamRoom');
-      return;
+    if (!color) {
+      const taken = new Set([...peers.values()].map(p => p.color));
+      const available = JAM_COLORS.filter(c => !taken.has(c));
+      const pool = available.length > 0 ? available : JAM_COLORS;
+      color = pool[Math.floor(Math.random() * pool.length)];
+      sessionStorage.setItem('jamColor', color);
     }
-    if (jamRoomCode) {
-      jamReconnectCount++;
-      if (jamReconnectCount > WS_MAX_RETRIES) {
-        updateJamUI('failed');
-      } else {
-        updateJamUI('reconnecting');
-        scheduleReconnect();
+    this.name = name;
+    this.color = color;
+  }
+
+  connect(roomCode, peers) {
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      this.ws.close();
+    }
+
+    this.roomCode = roomCode.toUpperCase();
+    this.tabId = this._generateTabId();
+    this._initIdentity(peers);
+    sessionStorage.setItem('jamRoom', this.roomCode);
+
+    this._emit('state-change', 'connecting');
+
+    const wsUrl = `${WS_URL}?room=${this.roomCode}`;
+    const ws = new WebSocket(wsUrl);
+    this.ws = ws;
+
+    ws.onopen = () => {
+      this.connected = true;
+      this._reconnectDelay = WS_RECONNECT_BASE;
+      this._reconnectCount = 0;
+      jamLog('connected to room', this.roomCode, 'as', this.name);
+      this._emit('state-change', 'connected');
+      this._emit('open');
+    };
+
+    ws.onmessage = (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
+      this._emit('message', msg);
+    };
+
+    ws.onclose = (e) => {
+      this.connected = false;
+      if (e.code === 4002) {
+        this._emit('state-change', 'full');
+        sessionStorage.removeItem('jamRoom');
+        return;
       }
-    }
-  };
-
-  ws.onerror = () => {
-    jamLog('connection error', WS_URL);
-  };
-}
-
-function scheduleReconnect() {
-  if (jamReconnectTimer) clearTimeout(jamReconnectTimer);
-  jamReconnectTimer = setTimeout(() => {
-    if (jamRoomCode) {
-      connectToRoom(jamRoomCode);
-    }
-  }, jamReconnectDelay);
-  jamReconnectDelay = Math.min(jamReconnectDelay * 2, WS_RECONNECT_MAX);
-}
-
-function disconnectJam() {
-  jamRoomCode = null;
-  sessionStorage.removeItem('jamRoom');
-  if (jamReconnectTimer) {
-    clearTimeout(jamReconnectTimer);
-    jamReconnectTimer = null;
-  }
-  if (jamWs) {
-    jamWs.close();
-    jamWs = null;
-  }
-  jamConnected = false;
-  jamPeers.clear();
-  teardownClockSync();
-  updateJamUI('disconnected');
-}
-
-// ── State broadcast (debounced) ───────────────────────────
-
-function scheduleJamBroadcast() {
-  if (!jamConnected || !jamWs) return;
-  clearTimeout(jamBroadcastTimer);
-  jamBroadcastTimer = setTimeout(() => {
-    if (!jamConnected || !jamWs) return;
-    jamWs.send(JSON.stringify({
-      type: 'state-update',
-      tabId: jamTabId,
-      state: typeof serializeSession === 'function' ? serializeSession() : null
-    }));
-  }, 200);
-}
-
-// ── Transport sync ────────────────────────────────────────
-
-let jamTransportRemote = false; // guard against broadcast loops
-
-function jamSendTransport(action, value) {
-  if (!jamConnected || !jamWs || jamTransportRemote) return;
-  jamWs.send(JSON.stringify({
-    type: 'transport',
-    tabId: jamTabId,
-    action,
-    value
-  }));
-}
-
-function handleRemoteTransport(msg) {
-  if (msg.tabId === jamTabId) return;
-  jamTransportRemote = true;
-  try {
-    switch (msg.action) {
-      case 'play':
-        if (typeof play === 'function') play();
-        break;
-      case 'request-sync':
-        // New tab requesting current transport state — send directly
-        // (bypass jamSendTransport since jamTransportRemote is set)
-        if (typeof isPlaying !== 'undefined' && isPlaying && jamWs) {
-          jamWs.send(JSON.stringify({
-            type: 'transport',
-            tabId: jamTabId,
-            action: 'sync-state',
-            value: {
-              playing: true,
-              step: typeof seqPosition !== 'undefined' ? seqPosition : 0,
-              transportPos: Tone.Transport.seconds,
-              bpm: Tone.Transport.bpm.value
-            }
-          }));
+      if (this.roomCode) {
+        this._reconnectCount++;
+        if (this._reconnectCount > WS_MAX_RETRIES) {
+          this._emit('state-change', 'failed');
+        } else {
+          this._emit('state-change', 'reconnecting');
+          this._scheduleReconnect(peers);
         }
-        break;
-      case 'sync-state':
-        if (msg.value && msg.value.playing) {
-          if (typeof setBPM === 'function' && msg.value.bpm) {
-            setBPM(msg.value.bpm);
-            const bpmEl = document.getElementById('bpm');
-            if (bpmEl) bpmEl.value = msg.value.bpm;
+      }
+    };
+
+    ws.onerror = () => {
+      jamLog('connection error', WS_URL);
+    };
+  }
+
+  _scheduleReconnect(peers) {
+    if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
+    this._reconnectTimer = setTimeout(() => {
+      if (this.roomCode) this.connect(this.roomCode, peers);
+    }, this._reconnectDelay);
+    this._reconnectDelay = Math.min(this._reconnectDelay * 2, WS_RECONNECT_MAX);
+  }
+
+  disconnect() {
+    this.roomCode = null;
+    sessionStorage.removeItem('jamRoom');
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+    this.connected = false;
+    this._emit('state-change', 'disconnected');
+  }
+
+  send(msg) {
+    if (!this.connected || !this.ws) return false;
+    this.ws.send(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    return true;
+  }
+
+  resetRetries() {
+    this._reconnectCount = 0;
+    this._reconnectDelay = WS_RECONNECT_BASE;
+  }
+}
+
+// ── JamSync — Transport sync, beat sync, leader election ────
+
+class JamSync {
+  constructor(connection) {
+    this.conn = connection;
+    this._clockChannel = null;
+    this._isLeader = false;
+    this._leaderTabId = null;
+    this._leaderElectionTimer = null;
+    this._transportRemote = false;
+    this._awaitingFirstBeatSync = false;
+  }
+
+  get isLeader() { return this._isLeader; }
+
+  initClockSync() {
+    if (!('BroadcastChannel' in window)) return;
+    this._clockChannel = new BroadcastChannel('jam-clock');
+
+    this._clockChannel.onmessage = (e) => {
+      const msg = e.data;
+      switch (msg.type) {
+        case 'leader-claim':
+          if (msg.tabId !== this.conn.tabId) {
+            this._leaderTabId = msg.tabId;
+            this._isLeader = false;
           }
-          if (typeof play === 'function') {
-            play().then(() => {
-              if (msg.value.transportPos != null) {
-                Tone.Transport.seconds = msg.value.transportPos;
+          break;
+        case 'leader-ping':
+          if (this._isLeader) {
+            this._clockChannel.postMessage({ type: 'leader-claim', tabId: this.conn.tabId });
+          }
+          break;
+        case 'beat-sync':
+          if (!this._isLeader && msg.tabId !== this.conn.tabId && typeof Tone !== 'undefined') {
+            if (this._awaitingFirstBeatSync) {
+              // New joiner: snap to leader on first beat-sync
+              this._awaitingFirstBeatSync = false;
+              if (typeof setSeqPosition === 'function') {
+                setSeqPosition(msg.step);
               }
-            });
+              jamLog('local beat-sync snap to step', msg.step);
+            } else {
+              this._nudgeTransport(msg);
+            }
           }
-        }
-        break;
-      case 'stop':
-        if (typeof stop === 'function') stop();
-        break;
-      case 'bpm':
-        if (typeof setBPM === 'function' && msg.value) {
-          setBPM(msg.value);
-          const bpmEl = document.getElementById('bpm');
-          if (bpmEl) bpmEl.value = msg.value;
-          scheduleHashSync();
-        }
-        break;
-    }
-  } finally {
-    jamTransportRemote = false;
-  }
-}
-
-// ── Local clock sync (BroadcastChannel) ───────────────────
-
-let clockChannel = null;
-let isClockLeader = false;
-let leaderTabId = null;
-let leaderElectionTimer = null;
-
-function initClockSync() {
-  if (!('BroadcastChannel' in window)) return;
-  clockChannel = new BroadcastChannel('jam-clock');
-
-  clockChannel.onmessage = (e) => {
-    const msg = e.data;
-    switch (msg.type) {
-      case 'leader-claim':
-        // Another tab is claiming leadership
-        if (msg.tabId !== jamTabId) {
-          leaderTabId = msg.tabId;
-          isClockLeader = false;
-        }
-        break;
-      case 'leader-ping':
-        // Another tab asking who's here — if we're leader, re-assert
-        if (isClockLeader) {
-          clockChannel.postMessage({ type: 'leader-claim', tabId: jamTabId });
-        }
-        break;
-      case 'leader-pong':
-        // Someone responded to our ping — they exist, let leader-claim resolve it
-        break;
-      case 'beat-sync':
-        // Leader broadcasting beat position — followers align
-        if (!isClockLeader && msg.tabId !== jamTabId && typeof Tone !== 'undefined') {
-          nudgeTransport(msg);
-        }
-        break;
-      case 'leader-gone':
-        // Leader left — elect new one
-        if (msg.tabId === leaderTabId) {
-          leaderTabId = null;
-          tryBecomeLeader();
-        }
-        break;
-    }
-  };
-
-  tryBecomeLeader();
-}
-
-function tryBecomeLeader() {
-  // Wait briefly for existing leader to respond
-  clearTimeout(leaderElectionTimer);
-  clockChannel.postMessage({ type: 'leader-ping', tabId: jamTabId });
-  leaderElectionTimer = setTimeout(() => {
-    if (!leaderTabId) {
-      isClockLeader = true;
-      leaderTabId = jamTabId;
-      clockChannel.postMessage({ type: 'leader-claim', tabId: jamTabId });
-    }
-  }, 200);
-}
-
-function broadcastBeatSync(step) {
-  if (!isClockLeader || !clockChannel) return;
-  clockChannel.postMessage({
-    type: 'beat-sync',
-    tabId: jamTabId,
-    step,
-    transportPos: Tone.Transport.seconds,
-    bpm: Tone.Transport.bpm.value
-  });
-}
-
-function nudgeTransport(msg) {
-  if (typeof Tone === 'undefined' || !Tone.Transport) return;
-  if (typeof isPlaying !== 'undefined' && isPlaying && typeof seqPosition !== 'undefined') {
-    // Snap to leader position if more than 1 step out of sync
-    const stepDiff = Math.abs(msg.step - seqPosition);
-    if (stepDiff > 1 && stepDiff < 15) {
-      Tone.Transport.seconds = msg.transportPos;
-    }
-  }
-}
-
-function teardownClockSync() {
-  if (clockChannel) {
-    if (isClockLeader) {
-      clockChannel.postMessage({ type: 'leader-gone', tabId: jamTabId });
-    }
-    clockChannel.close();
-    clockChannel = null;
-  }
-  isClockLeader = false;
-  leaderTabId = null;
-}
-
-// ── Message handling ──────────────────────────────────────
-
-function handleJamMessage(msg) {
-  jamLog('recv', msg.type, msg.tabId || '');
-  switch (msg.type) {
-    case 'room-state':
-      if (msg.tabs) {
-        for (const [id, data] of Object.entries(msg.tabs)) {
-          if (id !== jamTabId) {
-            jamPeers.set(id, data);
+          break;
+        case 'leader-gone':
+          if (msg.tabId === this._leaderTabId) {
+            this._leaderTabId = null;
+            this._tryBecomeLeader();
           }
-        }
-        resolveColorCollision();
-        updatePeerDisplay();
+          break;
       }
-      break;
-    case 'announce':
-      if (msg.tabId && msg.tabId !== jamTabId) {
-        jamPeers.set(msg.tabId, { name: msg.name, color: msg.color, state: msg.state });
-        updatePeerDisplay();
-      }
-      break;
-    case 'state-update':
-      if (msg.tabId && msg.tabId !== jamTabId) {
-        const peer = jamPeers.get(msg.tabId) || {};
-        peer.state = msg.state;
-        jamPeers.set(msg.tabId, peer);
-        updatePeerDisplay();
-      }
-      break;
-    case 'leave':
-      if (msg.tabId) {
-        jamPeers.delete(msg.tabId);
-        updatePeerDisplay();
-      }
-      break;
-    case 'transport':
-      handleRemoteTransport(msg);
-      break;
+    };
+
+    this._tryBecomeLeader();
   }
-}
 
-// ── Peer display ──────────────────────────────────────────
+  _tryBecomeLeader() {
+    clearTimeout(this._leaderElectionTimer);
+    this._clockChannel.postMessage({ type: 'leader-ping', tabId: this.conn.tabId });
+    this._leaderElectionTimer = setTimeout(() => {
+      if (!this._leaderTabId) {
+        this._isLeader = true;
+        this._leaderTabId = this.conn.tabId;
+        this._clockChannel.postMessage({ type: 'leader-claim', tabId: this.conn.tabId });
+      }
+    }, 200);
+  }
 
-function updatePeerDisplay() {
-  // Update dots next to Jam button (always visible when connected)
-  const dotsContainer = document.getElementById('jam-dots');
-  if (dotsContainer) {
-    let dots = `<span class="jam-peer-dot" style="--peer-color: ${jamColor};"></span>`;
-    for (const [, peer] of jamPeers) {
-      dots += `<span class="jam-peer-dot" style="--peer-color: ${peer.color || '#777'};"></span>`;
+  broadcastBeatSync(step) {
+    if (!this._isLeader || !this._clockChannel) return;
+    this._clockChannel.postMessage({
+      type: 'beat-sync',
+      tabId: this.conn.tabId,
+      step,
+      transportPos: Tone.Transport.seconds,
+      bpm: Tone.Transport.bpm.value
+    });
+
+    // Also send over WebSocket for remote tabs (every step)
+    this.conn.send({
+      type: 'transport',
+      tabId: this.conn.tabId,
+      action: 'beat-sync',
+      step
+    });
+  }
+
+  sendTransport(action, value) {
+    if (this._transportRemote) return;
+    this.conn.send({
+      type: 'transport',
+      tabId: this.conn.tabId,
+      action,
+      value
+    });
+  }
+
+  handleTransportMessage(msg) {
+    if (msg.tabId === this.conn.tabId) return;
+    this._transportRemote = true;
+    try {
+      switch (msg.action) {
+        case 'play':
+          if (typeof play === 'function') play();
+          break;
+        case 'request-sync':
+          jamLog('request-sync received, isPlaying=', typeof isPlaying !== 'undefined' ? isPlaying : 'undef');
+          if (typeof isPlaying !== 'undefined' && isPlaying && this.conn.ws) {
+            this.conn.ws.send(JSON.stringify({
+              type: 'transport',
+              tabId: this.conn.tabId,
+              action: 'sync-state',
+              value: {
+                playing: true,
+                step: typeof seqPosition !== 'undefined' ? seqPosition : 0,
+                transportPos: Tone.Transport.seconds,
+                bpm: Tone.Transport.bpm.value
+              }
+            }));
+          }
+          break;
+        case 'sync-state':
+          jamLog('sync-state received', msg.value);
+          if (msg.value && msg.value.playing) {
+            this._applyTransportSync(msg.value);
+          }
+          break;
+        case 'stop':
+          if (typeof stop === 'function') stop();
+          break;
+        case 'bpm':
+          if (typeof setBPM === 'function' && msg.value) {
+            setBPM(msg.value);
+            const bpmEl = document.getElementById('bpm');
+            if (bpmEl) bpmEl.value = msg.value;
+            scheduleHashSync();
+          }
+          break;
+        case 'beat-sync':
+          // Remote beat-sync from WS (cross-device)
+          if (typeof Tone !== 'undefined') {
+            if (this._awaitingFirstBeatSync) {
+              this._awaitingFirstBeatSync = false;
+              if (typeof setSeqPosition === 'function') {
+                setSeqPosition(msg.step);
+              }
+              jamLog('remote beat-sync snap to step', msg.step);
+            } else {
+              this._nudgeTransport(msg);
+            }
+          }
+          break;
+      }
+    } finally {
+      this._transportRemote = false;
     }
-    dotsContainer.innerHTML = dots;
   }
 
-  // Update expanded peer list in panel
-  const container = document.getElementById('jam-peers');
-  if (!container) return;
-
-  let html = '';
-  for (const [, peer] of jamPeers) {
-    const name = peer.name || '?';
-    const color = peer.color || '#777';
-    html += `<span class="jam-peer" style="--peer-color: ${color};">
-      <span class="jam-peer-dot"></span>${name}
-    </span>`;
-  }
-  container.innerHTML = html;
-}
-
-function resolveColorCollision() {
-  const takenColors = new Set([...jamPeers.values()].map(p => p.color));
-  if (takenColors.has(jamColor)) {
-    const available = JAM_COLORS.filter(c => !takenColors.has(c));
-    if (available.length > 0) {
-      jamColor = available[Math.floor(Math.random() * available.length)];
-      sessionStorage.setItem('jamColor', jamColor);
-      // Re-announce with new color
-      if (jamWs && jamConnected) {
-        jamWs.send(JSON.stringify({
-          type: 'announce',
-          tabId: jamTabId,
-          name: jamName,
-          color: jamColor,
-          state: typeof serializeSession === 'function' ? serializeSession() : null
-        }));
+  // Handle room-state transport for new joiners
+  handleRoomTransport(transport) {
+    if (!transport) return;
+    jamLog('room-state transport', transport);
+    if (transport.playing) {
+      // Set BPM first
+      if (typeof setBPM === 'function' && transport.bpm) {
+        setBPM(transport.bpm);
+        const bpmEl = document.getElementById('bpm');
+        if (bpmEl) bpmEl.value = Math.round(transport.bpm);
       }
-    }
-  }
-}
-
-// ── UI ───────────────────────────────────────────────────
-
-function updateJamUI(state) {
-  const btn = document.getElementById('jam-btn');
-  const panel = document.getElementById('jam-panel');
-  const dotsEl = document.getElementById('jam-dots');
-  if (!btn || !panel) return;
-
-  switch (state) {
-    case 'connecting':
-      btn.classList.add('active');
-      btn.innerHTML = 'Jam';
-      if (dotsEl) dotsEl.innerHTML = '';
-      panel.innerHTML = `
-        <div class="jam-connected">
-          <span class="jam-code-display">${jamRoomCode}</span>
-          <span class="jam-status">connecting…</span>
-        </div>
-      `;
-      panel.style.display = 'flex';
-      break;
-
-    case 'connected':
-      btn.classList.add('active');
-      btn.innerHTML = 'Jam';
-      if (dotsEl) dotsEl.style.display = 'flex';
-      // Build expanded panel content
-      panel.innerHTML = `
-        <div class="jam-connected">
-          <span class="jam-code-display">${jamRoomCode}</span>
-          <span class="jam-self" style="--peer-color: ${jamColor};">
-            <span class="jam-peer-dot"></span>${jamName}
-          </span>
-          <div id="jam-peers" class="jam-peers"></div>
-          <button id="jam-copy-btn" class="jam-action-btn" title="Copy code">Copy</button>
-          <button id="jam-leave-btn" class="jam-action-btn jam-leave" title="Leave session">Leave</button>
-        </div>
-      `;
-      panel.style.display = 'none'; // collapsed by default — dots show status
-      function copyRoomCode() {
-        const copyBtn = document.getElementById('jam-copy-btn');
-        navigator.clipboard.writeText(jamRoomCode).then(() => {
-          if (copyBtn) { copyBtn.textContent = 'Copied!'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500); }
-        }).catch(() => {
-          // Fallback for non-secure contexts
-          const ta = document.createElement('textarea');
-          ta.value = jamRoomCode;
-          ta.style.position = 'fixed';
-          ta.style.opacity = '0';
-          document.body.appendChild(ta);
-          ta.select();
-          document.execCommand('copy');
-          document.body.removeChild(ta);
-          if (copyBtn) { copyBtn.textContent = 'Copied!'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500); }
+      // Start playback, then wait for first beat-sync to snap position
+      this._awaitingFirstBeatSync = true;
+      if (typeof play === 'function' && typeof isPlaying !== 'undefined' && !isPlaying) {
+        play().then(() => {
+          // If no beat-sync arrives within 500ms, use the room-state step
+          setTimeout(() => {
+            if (this._awaitingFirstBeatSync) {
+              this._awaitingFirstBeatSync = false;
+              if (typeof setSeqPosition === 'function' && transport.step != null) {
+                setSeqPosition(transport.step);
+              }
+              jamLog('fallback: used room-state step', transport.step);
+            }
+          }, 500);
         });
       }
-      document.getElementById('jam-copy-btn').addEventListener('click', copyRoomCode);
-      document.querySelector('.jam-code-display').addEventListener('click', copyRoomCode);
-      document.getElementById('jam-leave-btn').addEventListener('click', disconnectJam);
-      updatePeerDisplay();
-      break;
+    }
+  }
 
-    case 'reconnecting':
-      btn.classList.add('active');
-      btn.innerHTML = 'Jam';
-      if (dotsEl) { dotsEl.innerHTML = '<span class="jam-reconnecting-dot"></span>'; dotsEl.style.display = 'flex'; }
-      panel.innerHTML = `
-        <div class="jam-connected">
-          <span class="jam-code-display">${jamRoomCode}</span>
-          <span class="jam-status">reconnecting…</span>
-          <button id="jam-leave-btn" class="jam-action-btn jam-leave" title="Leave session">Leave</button>
-        </div>
-      `;
-      panel.style.display = 'flex';
-      document.getElementById('jam-leave-btn').addEventListener('click', disconnectJam);
-      break;
-
-    case 'failed':
-      btn.classList.add('active');
-      btn.innerHTML = 'Jam';
-      if (dotsEl) { dotsEl.innerHTML = ''; dotsEl.style.display = 'none'; }
-      panel.innerHTML = `
-        <div class="jam-connected">
-          <span class="jam-status">Connection failed</span>
-          <button id="jam-retry-btn" class="jam-action-btn" title="Retry">Retry</button>
-          <button id="jam-leave-btn" class="jam-action-btn jam-leave" title="Leave session">Leave</button>
-        </div>
-      `;
-      panel.style.display = 'flex';
-      document.getElementById('jam-retry-btn').addEventListener('click', () => {
-        jamReconnectCount = 0;
-        jamReconnectDelay = WS_RECONNECT_BASE;
-        connectToRoom(jamRoomCode);
+  _applyTransportSync(value) {
+    if (typeof setBPM === 'function' && value.bpm) {
+      setBPM(value.bpm);
+      const bpmEl = document.getElementById('bpm');
+      if (bpmEl) bpmEl.value = Math.round(value.bpm);
+    }
+    if (typeof play === 'function' && typeof isPlaying !== 'undefined' && !isPlaying) {
+      play().then(() => {
+        if (typeof setSeqPosition === 'function' && value.step != null) {
+          setSeqPosition(value.step);
+        }
       });
-      document.getElementById('jam-leave-btn').addEventListener('click', disconnectJam);
-      break;
+    } else if (typeof setSeqPosition === 'function' && value.step != null) {
+      setSeqPosition(value.step);
+    }
+  }
 
-    case 'full':
-      btn.classList.remove('active');
-      btn.innerHTML = 'Jam';
-      if (dotsEl) { dotsEl.innerHTML = ''; dotsEl.style.display = 'none'; }
-      panel.innerHTML = `<div class="jam-error">Room is full (max 4)</div>`;
-      panel.style.display = 'flex';
-      setTimeout(() => {
+  _nudgeTransport(msg) {
+    if (typeof Tone === 'undefined' || !Tone.Transport) return;
+    if (typeof isPlaying !== 'undefined' && isPlaying && typeof seqPosition !== 'undefined') {
+      const stepDiff = Math.abs(msg.step - seqPosition);
+      if (stepDiff > 0 && stepDiff < 15 && typeof setSeqPosition === 'function') {
+        setSeqPosition(msg.step);
+      }
+    }
+  }
+
+  teardown() {
+    if (this._clockChannel) {
+      if (this._isLeader) {
+        this._clockChannel.postMessage({ type: 'leader-gone', tabId: this.conn.tabId });
+      }
+      this._clockChannel.close();
+      this._clockChannel = null;
+    }
+    this._isLeader = false;
+    this._leaderTabId = null;
+    this._awaitingFirstBeatSync = false;
+  }
+}
+
+// ── JamUI — Peer display, panel, toasts ─────────────────────
+
+class JamUI {
+  constructor() {
+    this._toastQueue = [];
+  }
+
+  showToast(name, action, color) {
+    const toast = document.createElement('div');
+    toast.className = 'jam-toast';
+    toast.innerHTML = `<span class="jam-toast-dot" style="--peer-color: ${color || '#777'};"></span>${name} ${action}`;
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        toast.classList.add('visible');
+        setTimeout(() => {
+          toast.classList.remove('visible');
+          setTimeout(() => toast.remove(), 300);
+        }, 2000);
+      });
+    });
+  }
+
+  updatePeerDisplay(selfColor, peers) {
+    const dotsContainer = document.getElementById('jam-dots');
+    if (dotsContainer) {
+      let dots = `<span class="jam-peer-dot" style="--peer-color: ${selfColor};"></span>`;
+      for (const [, peer] of peers) {
+        dots += `<span class="jam-peer-dot" style="--peer-color: ${peer.color || '#777'};"></span>`;
+      }
+      dotsContainer.innerHTML = dots;
+    }
+
+    const container = document.getElementById('jam-peers');
+    if (!container) return;
+
+    let html = '';
+    for (const [, peer] of peers) {
+      const name = peer.name || '?';
+      const color = peer.color || '#777';
+      html += `<span class="jam-peer" style="--peer-color: ${color};">
+        <span class="jam-peer-dot"></span>${name}
+      </span>`;
+    }
+    container.innerHTML = html;
+  }
+
+  resolveColorCollision(connection, peers) {
+    const takenColors = new Set([...peers.values()].map(p => p.color));
+    if (takenColors.has(connection.color)) {
+      const available = JAM_COLORS.filter(c => !takenColors.has(c));
+      if (available.length > 0) {
+        connection.color = available[Math.floor(Math.random() * available.length)];
+        sessionStorage.setItem('jamColor', connection.color);
+        // Re-announce with new color
+        connection.send({
+          type: 'announce',
+          tabId: connection.tabId,
+          name: connection.name,
+          color: connection.color,
+          state: typeof serializeSession === 'function' ? serializeSession() : null
+        });
+      }
+    }
+  }
+
+  updateState(state, connection, peers, onDisconnect) {
+    const btn = document.getElementById('jam-btn');
+    const panel = document.getElementById('jam-panel');
+    const dotsEl = document.getElementById('jam-dots');
+    if (!btn || !panel) return;
+
+    switch (state) {
+      case 'connecting':
+        btn.classList.add('active');
+        btn.innerHTML = 'Jam';
+        if (dotsEl) dotsEl.innerHTML = '';
+        panel.innerHTML = `
+          <div class="jam-connected">
+            <span class="jam-code-display">${connection.roomCode}</span>
+            <span class="jam-status">connecting…</span>
+          </div>
+        `;
+        panel.style.display = 'flex';
+        break;
+
+      case 'connected':
+        btn.classList.add('active');
+        btn.innerHTML = 'Jam';
+        if (dotsEl) dotsEl.style.display = 'flex';
+        panel.innerHTML = `
+          <div class="jam-connected">
+            <span class="jam-code-display">${connection.roomCode}</span>
+            <span class="jam-self" style="--peer-color: ${connection.color};">
+              <span class="jam-peer-dot"></span>${connection.name}
+            </span>
+            <div id="jam-peers" class="jam-peers"></div>
+            <button id="jam-copy-btn" class="jam-action-btn" title="Copy code">Copy</button>
+            <button id="jam-leave-btn" class="jam-action-btn jam-leave" title="Leave session">Leave</button>
+          </div>
+        `;
+        panel.style.display = 'none';
+        const copyRoomCode = () => {
+          const copyBtn = document.getElementById('jam-copy-btn');
+          navigator.clipboard.writeText(connection.roomCode).then(() => {
+            if (copyBtn) { copyBtn.textContent = 'Copied!'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500); }
+          }).catch(() => {
+            const ta = document.createElement('textarea');
+            ta.value = connection.roomCode;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            if (copyBtn) { copyBtn.textContent = 'Copied!'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500); }
+          });
+        };
+        document.getElementById('jam-copy-btn').addEventListener('click', copyRoomCode);
+        document.querySelector('.jam-code-display').addEventListener('click', copyRoomCode);
+        document.getElementById('jam-leave-btn').addEventListener('click', onDisconnect);
+        this.updatePeerDisplay(connection.color, peers);
+        break;
+
+      case 'reconnecting':
+        btn.classList.add('active');
+        btn.innerHTML = 'Jam';
+        if (dotsEl) { dotsEl.innerHTML = '<span class="jam-reconnecting-dot"></span>'; dotsEl.style.display = 'flex'; }
+        panel.innerHTML = `
+          <div class="jam-connected">
+            <span class="jam-code-display">${connection.roomCode}</span>
+            <span class="jam-status">reconnecting…</span>
+            <button id="jam-leave-btn" class="jam-action-btn jam-leave" title="Leave session">Leave</button>
+          </div>
+        `;
+        panel.style.display = 'flex';
+        document.getElementById('jam-leave-btn').addEventListener('click', onDisconnect);
+        break;
+
+      case 'failed':
+        btn.classList.add('active');
+        btn.innerHTML = 'Jam';
+        if (dotsEl) { dotsEl.innerHTML = ''; dotsEl.style.display = 'none'; }
+        panel.innerHTML = `
+          <div class="jam-connected">
+            <span class="jam-status">Connection failed</span>
+            <button id="jam-retry-btn" class="jam-action-btn" title="Retry">Retry</button>
+            <button id="jam-leave-btn" class="jam-action-btn jam-leave" title="Leave session">Leave</button>
+          </div>
+        `;
+        panel.style.display = 'flex';
+        document.getElementById('jam-retry-btn').addEventListener('click', () => {
+          connection.resetRetries();
+          connection.connect(connection.roomCode, peers);
+        });
+        document.getElementById('jam-leave-btn').addEventListener('click', onDisconnect);
+        break;
+
+      case 'full':
+        btn.classList.remove('active');
+        btn.innerHTML = 'Jam';
+        if (dotsEl) { dotsEl.innerHTML = ''; dotsEl.style.display = 'none'; }
+        panel.innerHTML = `<div class="jam-error">Room is full (max 4)</div>`;
+        panel.style.display = 'flex';
+        setTimeout(() => {
+          panel.style.display = 'none';
+          panel.innerHTML = '';
+        }, 3000);
+        break;
+
+      case 'disconnected':
+      default:
+        btn.classList.remove('active');
+        btn.innerHTML = 'Jam';
+        if (dotsEl) { dotsEl.innerHTML = ''; dotsEl.style.display = 'none'; }
         panel.style.display = 'none';
         panel.innerHTML = '';
-      }, 3000);
-      break;
+        break;
+    }
+  }
 
-    case 'disconnected':
-    default:
-      btn.classList.remove('active');
-      btn.innerHTML = 'Jam';
-      if (dotsEl) { dotsEl.innerHTML = ''; dotsEl.style.display = 'none'; }
+  showOptions(panel, onStart, onJoin) {
+    panel.innerHTML = `
+      <button id="jam-start-btn" class="jam-action-btn">Start Session</button>
+      <div class="jam-join-group">
+        <input id="jam-join-input" type="text" maxlength="5" placeholder="CODE" spellcheck="false" autocomplete="off">
+        <button id="jam-join-btn" class="jam-action-btn">Join</button>
+      </div>
+    `;
+    panel.style.display = 'flex';
+
+    document.getElementById('jam-start-btn').addEventListener('click', onStart);
+
+    const joinInput = document.getElementById('jam-join-input');
+    const joinBtn = document.getElementById('jam-join-btn');
+
+    joinBtn.addEventListener('click', () => {
+      const code = joinInput.value.trim().toUpperCase();
+      if (code.length >= 3) onJoin(code);
+    });
+
+    joinInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const code = joinInput.value.trim().toUpperCase();
+        if (code.length >= 3) onJoin(code);
+      }
+    });
+
+    joinInput.addEventListener('input', () => {
+      joinInput.value = joinInput.value.toUpperCase();
+    });
+  }
+}
+
+// ── JamSession — Facade ────────────────────────────────────
+
+class JamSession {
+  constructor() {
+    this.conn = new JamConnection();
+    this.sync = new JamSync(this.conn);
+    this.ui = new JamUI();
+    this.peers = new Map();
+    this._broadcastTimer = null;
+
+    this._wireEvents();
+  }
+
+  _wireEvents() {
+    this.conn.on('state-change', (state) => {
+      this.ui.updateState(state, this.conn, this.peers, () => this.disconnect());
+    });
+
+    this.conn.on('open', () => {
+      this.sync.initClockSync();
+      // Announce this tab
+      this.conn.send({
+        type: 'announce',
+        tabId: this.conn.tabId,
+        name: this.conn.name,
+        color: this.conn.color,
+        state: typeof serializeSession === 'function' ? serializeSession() : null
+      });
+      // request-sync as fallback (sent directly to avoid guard)
+      setTimeout(() => {
+        if (this.conn.ws && this.conn.ws.readyState === WebSocket.OPEN) {
+          jamLog('sending request-sync');
+          this.conn.ws.send(JSON.stringify({
+            type: 'transport',
+            tabId: this.conn.tabId,
+            action: 'request-sync'
+          }));
+        }
+      }, 300);
+    });
+
+    this.conn.on('message', (msg) => this._handleMessage(msg));
+  }
+
+  _handleMessage(msg) {
+    jamLog('recv', msg.type, msg.tabId || '');
+    switch (msg.type) {
+      case 'room-state':
+        if (msg.tabs) {
+          for (const [id, data] of Object.entries(msg.tabs)) {
+            if (id !== this.conn.tabId) {
+              this.peers.set(id, data);
+            }
+          }
+          this.ui.resolveColorCollision(this.conn, this.peers);
+          this.ui.updatePeerDisplay(this.conn.color, this.peers);
+        }
+        // Handle transport state from room-state (new joiner)
+        if (msg.transport) {
+          this.sync.handleRoomTransport(msg.transport);
+        }
+        break;
+      case 'announce':
+        if (msg.tabId && msg.tabId !== this.conn.tabId) {
+          this.peers.set(msg.tabId, { name: msg.name, color: msg.color, state: msg.state });
+          this.ui.resolveColorCollision(this.conn, this.peers);
+          this.ui.updatePeerDisplay(this.conn.color, this.peers);
+          this.ui.showToast(msg.name || 'Someone', 'entered', msg.color);
+        }
+        break;
+      case 'state-update':
+        if (msg.tabId && msg.tabId !== this.conn.tabId) {
+          const peer = this.peers.get(msg.tabId) || {};
+          peer.state = msg.state;
+          this.peers.set(msg.tabId, peer);
+          this.ui.updatePeerDisplay(this.conn.color, this.peers);
+        }
+        break;
+      case 'leave':
+        if (msg.tabId) {
+          const leavingPeer = this.peers.get(msg.tabId);
+          const leaveName = leavingPeer ? leavingPeer.name : 'Someone';
+          const leaveColor = leavingPeer ? leavingPeer.color : '#777';
+          this.peers.delete(msg.tabId);
+          this.ui.updatePeerDisplay(this.conn.color, this.peers);
+          this.ui.showToast(leaveName, 'left', leaveColor);
+        }
+        break;
+      case 'transport':
+        this.sync.handleTransportMessage(msg);
+        break;
+    }
+  }
+
+  connect(roomCode) {
+    this.peers.clear();
+    this.conn.connect(roomCode, this.peers);
+  }
+
+  disconnect() {
+    this.conn.disconnect();
+    this.peers.clear();
+    this.sync.teardown();
+  }
+
+  scheduleStateBroadcast() {
+    if (!this.conn.connected) return;
+    clearTimeout(this._broadcastTimer);
+    this._broadcastTimer = setTimeout(() => {
+      if (!this.conn.connected) return;
+      this.conn.send({
+        type: 'state-update',
+        tabId: this.conn.tabId,
+        state: typeof serializeSession === 'function' ? serializeSession() : null
+      });
+    }, 200);
+  }
+
+  togglePanel() {
+    const panel = document.getElementById('jam-panel');
+    if (!panel) return;
+
+    if (this.conn.connected || this.conn.roomCode) {
+      panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
+      return;
+    }
+
+    if (panel.style.display === 'flex') {
       panel.style.display = 'none';
       panel.innerHTML = '';
-      break;
-  }
-}
-
-function showJamOptions(panel) {
-  panel.innerHTML = `
-    <button id="jam-start-btn" class="jam-action-btn">Start Session</button>
-    <div class="jam-join-group">
-      <input id="jam-join-input" type="text" maxlength="5" placeholder="CODE" spellcheck="false" autocomplete="off">
-      <button id="jam-join-btn" class="jam-action-btn">Join</button>
-    </div>
-  `;
-  panel.style.display = 'flex';
-
-  document.getElementById('jam-start-btn').addEventListener('click', () => {
-    const code = generateJamCode();
-    connectToRoom(code);
-  });
-
-  const joinInput = document.getElementById('jam-join-input');
-  const joinBtn = document.getElementById('jam-join-btn');
-
-  joinBtn.addEventListener('click', () => {
-    const code = joinInput.value.trim().toUpperCase();
-    if (code.length >= 3) connectToRoom(code);
-  });
-
-  joinInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      const code = joinInput.value.trim().toUpperCase();
-      if (code.length >= 3) connectToRoom(code);
+    } else {
+      this.ui.showOptions(
+        panel,
+        () => {
+          let code = '';
+          for (let i = 0; i < JAM_CODE_LENGTH; i++) {
+            code += JAM_CODE_CHARS[Math.floor(Math.random() * JAM_CODE_CHARS.length)];
+          }
+          this.connect(code);
+        },
+        (code) => this.connect(code)
+      );
     }
-  });
-
-  // Auto-uppercase input
-  joinInput.addEventListener('input', () => {
-    joinInput.value = joinInput.value.toUpperCase();
-  });
-}
-
-function toggleJamPanel() {
-  const panel = document.getElementById('jam-panel');
-  if (!panel) return;
-
-  if (jamConnected || jamRoomCode) {
-    // Toggle expanded panel showing room details or reconnecting state
-    panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
-    return;
   }
 
-  if (panel.style.display === 'flex') {
-    panel.style.display = 'none';
-    panel.innerHTML = '';
-  } else {
-    showJamOptions(panel);
-  }
-}
+  init() {
+    const btn = document.getElementById('jam-btn');
+    if (!btn) return;
 
-// ── Init ─────────────────────────────────────────────────
+    btn.addEventListener('click', () => this.togglePanel());
 
-function initJam() {
-  const btn = document.getElementById('jam-btn');
-  if (!btn) return;
+    document.addEventListener('click', (e) => {
+      const panel = document.getElementById('jam-panel');
+      const control = document.querySelector('.jam-control');
+      if (panel && panel.style.display === 'flex' && !control.contains(e.target)) {
+        panel.style.display = 'none';
+        if (!this.conn.connected) panel.innerHTML = '';
+      }
+    });
 
-  btn.addEventListener('click', toggleJamPanel);
-
-  // Click outside to close panel
-  document.addEventListener('click', (e) => {
-    const panel = document.getElementById('jam-panel');
-    const control = document.querySelector('.jam-control');
-    if (panel && panel.style.display === 'flex' && !control.contains(e.target)) {
-      panel.style.display = 'none';
-      if (!jamConnected) panel.innerHTML = '';
+    // Auto-reconnect if session exists
+    const savedRoom = sessionStorage.getItem('jamRoom');
+    if (savedRoom) {
+      this.connect(savedRoom);
     }
-  });
-
-  // Auto-reconnect if session exists
-  const savedRoom = sessionStorage.getItem('jamRoom');
-  if (savedRoom) {
-    connectToRoom(savedRoom);
   }
 }
+
+// ── Instantiate and expose ──────────────────────────────────
+
+const session = new JamSession();
+
+// Expose for app.js integration (global function API preserved)
+window.jamSession = session;
+window.jamSendTransport = (action, value) => session.sync.sendTransport(action, value);
+window.broadcastBeatSync = (step) => session.sync.broadcastBeatSync(step);
+window.scheduleJamBroadcast = () => session.scheduleStateBroadcast();
+window.disconnectJam = () => session.disconnect();
+window.connectToRoom = (code) => session.connect(code);
+
+// Expose state for app.js reads
+Object.defineProperty(window, 'jamConnected', { get: () => session.conn.connected });
+Object.defineProperty(window, 'jamRoomCode', { get: () => session.conn.roomCode });
+Object.defineProperty(window, 'jamTabId', { get: () => session.conn.tabId });
+Object.defineProperty(window, 'jamColor', { get: () => session.conn.color });
+Object.defineProperty(window, 'jamPeers', { get: () => session.peers });
+Object.defineProperty(window, 'isClockLeader', { get: () => session.sync.isLeader });
 
 // Initialize when DOM is ready
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initJam);
+  document.addEventListener('DOMContentLoaded', () => session.init());
 } else {
-  initJam();
+  session.init();
 }
+
+})();

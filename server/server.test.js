@@ -47,8 +47,11 @@ function collect(ws, duration = 500) {
 }
 
 async function cleanRoom(roomCode) {
-  const keys = await redisClient.keys(`room:${roomCode}:*`);
-  if (keys.length) await redisClient.del(keys);
+  // Clean both old-format and new hash-tagged keys
+  const oldKeys = await redisClient.keys(`room:${roomCode}:*`);
+  const newKeys = await redisClient.keys(`{room:${roomCode}}:*`);
+  const allKeys = [...oldKeys, ...newKeys];
+  if (allKeys.length) await redisClient.del(allKeys);
 }
 
 describe('WebSocket Relay Server', () => {
@@ -92,7 +95,6 @@ describe('WebSocket Relay Server', () => {
     const ws1 = await connect(room.toLowerCase());
     const ws2 = await connect(room);
 
-    // Attach listener BEFORE send
     const promise = listen(ws1, m => m.type === 'announce');
     await new Promise(r => setTimeout(r, 50));
     ws2.send(JSON.stringify({ type: 'announce', tabId: 'tn', name: 'T', color: '#fff', state: {} }));
@@ -162,9 +164,9 @@ describe('WebSocket Relay Server', () => {
     await cleanRoom(r1); await cleanRoom(r2);
   });
 
-  // ── Redis Persistence ─────────────────────────────────────
+  // ── Redis Persistence (RedisJSON) ──────────────────────────
 
-  it('stores tab state in Redis on announce', async () => {
+  it('stores tab state in Redis as JSON on announce', async () => {
     const room = 'STORE' + Date.now();
     const ws = await connect(room);
 
@@ -174,11 +176,10 @@ describe('WebSocket Relay Server', () => {
     }));
     await new Promise(r => setTimeout(r, 500));
 
-    const raw = await redisClient.get(`room:${room}:tab:ts`);
-    expect(raw).not.toBeNull();
-    const stored = JSON.parse(raw);
-    expect(stored.name).toBe('Chatterer');
-    expect(stored.state.grid).toEqual([[1, 0, 1]]);
+    const data = await redisClient.json.get(`{room:${room}}:tab:ts`);
+    expect(data).not.toBeNull();
+    expect(data.name).toBe('Chatterer');
+    expect(data.state.grid).toEqual([[1, 0, 1]]);
     ws.close();
     await cleanRoom(room);
   });
@@ -212,38 +213,37 @@ describe('WebSocket Relay Server', () => {
     ws.close();
     await new Promise(r => setTimeout(r, 300));
 
-    const raw = await redisClient.get(`room:${room}:tab:to`);
-    expect(raw).toBeNull();
-    const members = await redisClient.sMembers(`room:${room}:tabs`);
+    const data = await redisClient.json.get(`{room:${room}}:tab:to`).catch(() => null);
+    expect(data).toBeNull();
+    const members = await redisClient.sMembers(`{room:${room}}:tabs`);
     expect(members).not.toContain('to');
     await cleanRoom(room);
   });
 
   // ── State Updates ────────────────────────────────────────
 
-  it('persists state-update in Redis', async () => {
+  it('persists state-update via RedisJSON partial update', async () => {
     const room = 'UPDATE' + Date.now();
     const ws = await connect(room);
 
-    // First announce to create the tab entry
     ws.send(JSON.stringify({
       type: 'announce', tabId: 'tu', name: 'Spike', color: '#FF6B6B',
       state: { bpm: 120 }
     }));
     await new Promise(r => setTimeout(r, 500));
 
-    // Then send a state-update
     ws.send(JSON.stringify({
       type: 'state-update', tabId: 'tu',
       state: { bpm: 140, grid: [[1, 1, 0]] }
     }));
     await new Promise(r => setTimeout(r, 500));
 
-    const raw = await redisClient.get(`room:${room}:tab:tu`);
-    expect(raw).not.toBeNull();
-    const stored = JSON.parse(raw);
-    expect(stored.state.bpm).toBe(140);
-    expect(stored.state.grid).toEqual([[1, 1, 0]]);
+    const data = await redisClient.json.get(`{room:${room}}:tab:tu`);
+    expect(data).not.toBeNull();
+    expect(data.name).toBe('Spike'); // name preserved
+    expect(data.color).toBe('#FF6B6B'); // color preserved
+    expect(data.state.bpm).toBe(140);
+    expect(data.state.grid).toEqual([[1, 1, 0]]);
     ws.close();
     await cleanRoom(room);
   });
@@ -299,6 +299,84 @@ describe('WebSocket Relay Server', () => {
     await cleanRoom(room);
   });
 
+  it('persists transport play state in Redis', async () => {
+    const room = 'TPLAY' + Date.now();
+    const ws = await connect(room);
+
+    ws.send(JSON.stringify({ type: 'transport', tabId: 'tp', action: 'play' }));
+    await new Promise(r => setTimeout(r, 500));
+
+    const t = await redisClient.json.get(`{room:${room}}:transport`);
+    expect(t).not.toBeNull();
+    expect(t.playing).toBe(true);
+    ws.close();
+    await cleanRoom(room);
+  });
+
+  it('persists transport stop state in Redis', async () => {
+    const room = 'TSTOP' + Date.now();
+    const ws = await connect(room);
+
+    ws.send(JSON.stringify({ type: 'transport', tabId: 'tp', action: 'play' }));
+    await new Promise(r => setTimeout(r, 300));
+    ws.send(JSON.stringify({ type: 'transport', tabId: 'tp', action: 'stop' }));
+    await new Promise(r => setTimeout(r, 300));
+
+    const t = await redisClient.json.get(`{room:${room}}:transport`);
+    expect(t.playing).toBe(false);
+    ws.close();
+    await cleanRoom(room);
+  });
+
+  it('persists transport BPM in Redis', async () => {
+    const room = 'TBPM' + Date.now();
+    const ws = await connect(room);
+
+    ws.send(JSON.stringify({ type: 'transport', tabId: 'tp', action: 'bpm', value: 160 }));
+    await new Promise(r => setTimeout(r, 500));
+
+    const t = await redisClient.json.get(`{room:${room}}:transport`);
+    expect(t.bpm).toBe(160);
+    ws.close();
+    await cleanRoom(room);
+  });
+
+  it('updates transport step via beat-sync without overwriting other fields', async () => {
+    const room = 'TBEAT' + Date.now();
+    const ws = await connect(room);
+
+    ws.send(JSON.stringify({ type: 'transport', tabId: 'tp', action: 'play' }));
+    await new Promise(r => setTimeout(r, 300));
+    ws.send(JSON.stringify({ type: 'transport', tabId: 'tp', action: 'beat-sync', step: 7 }));
+    await new Promise(r => setTimeout(r, 300));
+
+    const t = await redisClient.json.get(`{room:${room}}:transport`);
+    expect(t.playing).toBe(true);
+    expect(t.step).toBe(7);
+    ws.close();
+    await cleanRoom(room);
+  });
+
+  it('includes transport state in room-state for new joiners', async () => {
+    const room = 'TJOIN' + Date.now();
+    const ws1 = await connect(room);
+
+    ws1.send(JSON.stringify({ type: 'announce', tabId: 'tj1', name: 'A', color: '#fff', state: {} }));
+    await new Promise(r => setTimeout(r, 300));
+    ws1.send(JSON.stringify({ type: 'transport', tabId: 'tj1', action: 'play' }));
+    await new Promise(r => setTimeout(r, 300));
+    ws1.send(JSON.stringify({ type: 'transport', tabId: 'tj1', action: 'bpm', value: 140 }));
+    await new Promise(r => setTimeout(r, 300));
+
+    const ws2 = await connect(room);
+    const msg = await listen(ws2, m => m.type === 'room-state');
+    expect(msg.transport).not.toBeNull();
+    expect(msg.transport.playing).toBe(true);
+    expect(msg.transport.bpm).toBe(140);
+    ws1.close(); ws2.close();
+    await cleanRoom(room);
+  });
+
   // ── Session Snapshots ────────────────────────────────────
 
   it('cleans room state after all clients disconnect', async () => {
@@ -311,13 +389,10 @@ describe('WebSocket Relay Server', () => {
     }));
     await new Promise(r => setTimeout(r, 500));
 
-    // Everyone disconnects — state should be cleaned up
     ws1.close();
     await new Promise(r => setTimeout(r, 300));
 
-    // New client joins — should get empty room (no stale peers)
     const ws2 = await connect(room);
-    // Wait briefly for any room-state message
     let gotRoomState = false;
     const timeout = new Promise(r => setTimeout(() => r(null), 500));
     const msgPromise = new Promise(resolve => {
@@ -329,11 +404,9 @@ describe('WebSocket Relay Server', () => {
         }
       });
     });
-    await Promise.race([msgPromise, timeout]);
-    // Either no room-state received, or it has no tabs
-    if (gotRoomState) {
-      const msg = await msgPromise;
-      expect(Object.keys(msg.tabs)).toHaveLength(0);
+    const result = await Promise.race([msgPromise, timeout]);
+    if (gotRoomState && result) {
+      expect(Object.keys(result.tabs)).toHaveLength(0);
     }
     ws2.close();
     await cleanRoom(room);
@@ -356,6 +429,99 @@ describe('WebSocket Relay Server', () => {
     expect(msg.type).toBe('leave');
     expect(msg.tabId).toBe('tl');
     ws2.close();
+    await cleanRoom(room);
+  });
+
+  // ── Room-state filtering ────────────────────────────────
+
+  it('filters room-state to only active WS connections', async () => {
+    const room = 'FILTER' + Date.now();
+    const ws1 = await connect(room);
+
+    ws1.send(JSON.stringify({
+      type: 'announce', tabId: 'tf1', name: 'A', color: '#fff', state: {}
+    }));
+    await new Promise(r => setTimeout(r, 300));
+
+    // Manually inject a stale tab into Redis
+    await redisClient.sAdd(`{room:${room}}:tabs`, 'stale-tab');
+    await redisClient.json.set(`{room:${room}}:tab:stale-tab`, '$', {
+      tabId: 'stale-tab', name: 'Ghost', color: '#000', state: {}
+    });
+
+    const ws2 = await connect(room);
+    const msg = await listen(ws2, m => m.type === 'room-state');
+
+    // Should include tf1 (active) but NOT stale-tab (no WS connection)
+    expect(msg.tabs['tf1']).toBeDefined();
+    expect(msg.tabs['stale-tab']).toBeUndefined();
+
+    ws1.close(); ws2.close();
+    await new Promise(r => setTimeout(r, 200));
+
+    // Stale tab should have been cleaned up
+    const staleData = await redisClient.json.get(`{room:${room}}:tab:stale-tab`).catch(() => null);
+    expect(staleData).toBeNull();
+
+    await cleanRoom(room);
+  });
+
+  // ── Reconnect ────────────────────────────────────────────
+
+  it('reconnect: fresh state, no orphans', async () => {
+    const room = 'RECON' + Date.now();
+    const ws1 = await connect(room);
+
+    ws1.send(JSON.stringify({
+      type: 'announce', tabId: 'tr1', name: 'Face', color: '#FF6B6B', state: { v: 1 }
+    }));
+    await new Promise(r => setTimeout(r, 300));
+
+    // Disconnect
+    ws1.close();
+    await new Promise(r => setTimeout(r, 300));
+
+    // Reconnect with new tabId (as the real client does)
+    const ws2 = await connect(room);
+    ws2.send(JSON.stringify({
+      type: 'announce', tabId: 'tr2', name: 'Face', color: '#FF6B6B', state: { v: 2 }
+    }));
+    await new Promise(r => setTimeout(r, 300));
+
+    // Verify old tab is gone, new tab exists
+    const members = await redisClient.sMembers(`{room:${room}}:tabs`);
+    expect(members).not.toContain('tr1');
+    expect(members).toContain('tr2');
+
+    ws2.close();
+    await cleanRoom(room);
+  });
+
+  // ── Redis key cleanup ────────────────────────────────────
+
+  it('no orphaned Redis keys after all tabs leave', async () => {
+    const room = 'CLEAN' + Date.now();
+    const ws1 = await connect(room);
+    const ws2 = await connect(room);
+
+    ws1.send(JSON.stringify({ type: 'announce', tabId: 'tc1', name: 'A', color: '#fff', state: {} }));
+    ws2.send(JSON.stringify({ type: 'announce', tabId: 'tc2', name: 'B', color: '#000', state: {} }));
+    ws1.send(JSON.stringify({ type: 'transport', tabId: 'tc1', action: 'play' }));
+    await new Promise(r => setTimeout(r, 500));
+
+    ws1.close();
+    ws2.close();
+    await new Promise(r => setTimeout(r, 500));
+
+    // Tab data keys should be cleaned up on disconnect
+    const tabKeys = await redisClient.keys(`{room:${room}}:tab:*`);
+    expect(tabKeys).toHaveLength(0);
+
+    // Tabs set should have no members (or not exist)
+    const members = await redisClient.sMembers(`{room:${room}}:tabs`);
+    expect(members).toHaveLength(0);
+
+    // Transport key may still exist (TTL-based cleanup) — that's OK
     await cleanRoom(room);
   });
 });

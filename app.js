@@ -1176,7 +1176,7 @@ function buildLoop() {
     }
 
     // Local clock sync: leader broadcasts beat position for follower tabs
-    if (step === 0 && typeof broadcastBeatSync === 'function') broadcastBeatSync(step);
+    if (typeof broadcastBeatSync === 'function') broadcastBeatSync(step);
 
     scheduleVisual(() => {
       highlightPlayhead(step);
@@ -1286,6 +1286,13 @@ function scheduleVisual(cb, time) {
     try { Tone.getDraw().schedule(cb, time); return; } catch (_) { /* fall through */ }
   }
   requestAnimationFrame(cb);
+}
+
+function setSeqPosition(step) {
+  if (step >= 0 && step < 16) {
+    seqPosition = step;
+    prevStep = -1;
+  }
 }
 
 async function play() {
@@ -2747,6 +2754,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Warm up AudioContext on first interaction so it's ready before Play is pressed
   document.addEventListener('pointerdown', async () => { await Tone.start(); }, { once: true });
+
+  // Info bar: docked on load, auto-release after 5s or on close click
+  const infoBar = document.getElementById('info-bar');
+  const undockInfo = () => infoBar.classList.remove('docked');
+  document.getElementById('info-bar-close').addEventListener('click', undockInfo);
+  setTimeout(undockInfo, 5000);
 
   // Drag-to-paint: track pointer across step/drum cells and paint them all
   document.addEventListener('pointermove', (e) => {
