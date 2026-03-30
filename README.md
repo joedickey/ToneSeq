@@ -64,7 +64,6 @@ Open `http://localhost:3000` in multiple tabs to test jam sessions.
 - Transport sync (play/stop/BPM) across all participants
 - Same-browser tabs sync via BroadcastChannel for zero-latency coordination
 - Auto-reconnect with exponential backoff
-- Works without a server — solo mode is always available
 
 **Save & Share**
 - Full session state persists in the URL hash — bookmark or share a link to restore everything
