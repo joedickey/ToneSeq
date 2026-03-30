@@ -13,9 +13,9 @@ Or clone and open `index.html` directly — no build step, no server required. A
 Jam sessions require an HTTP server (for CORS), a WebSocket server, and Redis:
 
 ```bash
-# 1. Start Redis (needs JSON module — use Redis Stack or Redis 8.0+)
-brew services start redis          # macOS
-# or: docker run -p 6379:6379 redis/redis-stack-server:latest
+# 1. Start Redis 8+ (JSON module included)
+brew services start redis          # macOS (if Redis 8+ installed)
+# or: docker run -p 6379:6379 redis:8.6
 
 # 2. Start the WebSocket server
 cd server
@@ -97,8 +97,8 @@ Open `http://localhost:3000` in multiple tabs to test jam sessions.
 
 The WebSocket server requires Node.js 18+ and Redis with JSON module support. See [Local development](#local-development-with-jam-sessions) above for setup steps. Compatible Redis options:
 
-- **Redis Stack** (local dev): `brew install redis-stack-server` or Docker
-- **Redis 8.0+** (JSON bundled natively)
+- **Redis 8.0+** (recommended): `docker run -p 6379:6379 redis:8.6` — JSON module bundled natively
+- **Redis Stack** (alternative): `docker run -p 6379:6379 redis/redis-stack-server:latest`
 - **Redis Cloud** with JSON module enabled
 
 The server validates RedisJSON availability on startup and exits with a clear error if it's missing. Solo mode works without any backend.
