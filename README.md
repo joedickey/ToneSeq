@@ -61,9 +61,30 @@ Or clone and open `index.html` directly — no build step, no server required.
 | Clear everything | Click **Clear All** in the controls panel |
 | Show/hide controls | Click **Controls** toggle in the header |
 
+## Jam Server (optional)
+
+The jam session feature requires a WebSocket server with Redis for state persistence.
+
+**Requirements:**
+- Node.js 18+
+- Redis with JSON module — any of:
+  - **Redis Stack** (local dev): `docker run -p 6379:6379 redis/redis-stack-server:latest` or `brew install redis-stack-server`
+  - **Redis 8.0+** (JSON bundled natively)
+  - **Redis Cloud** with JSON module enabled
+
+**Setup:**
+```bash
+cd server
+cp .env.example .env    # edit REDIS_URL if needed
+npm install
+npm start               # starts WebSocket server on port 8080
+```
+
+The server validates RedisJSON availability on startup and exits with a clear error if it's missing. Solo mode (no server) works without any backend.
+
 ## Tech
 
-Built with [Tone.js](https://tonejs.github.io/) for audio synthesis and [Cytoscape.js](https://js.cytoscape.org/) for graph visualization. Pure HTML/CSS/JS — no framework, no build step, no server.
+Built with [Tone.js](https://tonejs.github.io/) for audio synthesis and [Cytoscape.js](https://js.cytoscape.org/) for graph visualization. Pure HTML/CSS/JS — no framework, no build step, no server (except for optional jam sessions).
 
 ## Support
 

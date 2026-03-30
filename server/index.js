@@ -197,6 +197,19 @@ function createServer(options = {}) {
 
 // ── Main ───────────────────────────────────────────────────
 
+async function probeRedisJSON(client) {
+  try {
+    await client.json.set('__redischeck__', '$', 1);
+    await client.del('__redischeck__');
+  } catch (err) {
+    log('error', 'RedisJSON module is not available. The server requires Redis with JSON support.', {
+      hint: 'Use Redis Stack (docker run -p 6379:6379 redis/redis-stack-server:latest), Redis 8.0+, or Redis Cloud with JSON enabled.',
+      error: err.message
+    });
+    process.exit(1);
+  }
+}
+
 async function main() {
   const redisUrl = process.env.REDIS_URL || DEFAULT_REDIS_URL;
   const pub = redis.createClient({
@@ -208,6 +221,7 @@ async function main() {
   });
   await pub.connect();
   log('info', 'Redis connected', { url: redisUrl });
+  await probeRedisJSON(pub);
   const port = process.env.PORT || DEFAULT_PORT;
   const wss = createServer({ port, redisClient: pub });
   return wss;
