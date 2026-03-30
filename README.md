@@ -13,6 +13,10 @@ Or clone and open `index.html` directly — no build step, no server required. A
 Jam sessions require an HTTP server (for CORS), a WebSocket server, and Redis:
 
 ```bash
+# Clone the dev branch (jam sessions are on dev, not main)
+git clone -b dev https://github.com/joedickey/ToneSeq.git
+cd ToneSeq
+
 # 1. Start Redis 8+ (JSON module included)
 brew services start redis          # macOS (if Redis 8+ installed)
 # or: docker run -p 6379:6379 redis:8.6
