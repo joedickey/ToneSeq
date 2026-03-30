@@ -193,6 +193,7 @@ class JamSync {
     this._leaderTabId = null;
     this._leaderElectionTimer = null;
     this._transportRemote = false;
+    this._needsInitialSync = false;
   }
 
   get isLeader() { return this._isLeader; }
@@ -340,9 +341,10 @@ class JamSync {
       const state = this.transport.getState();
       this._transportRemote = true;
       if (!state.isPlaying) {
+        this._needsInitialSync = true;
         this.transport.play(roomTransport.step).then(() => {
           this._transportRemote = false;
-          jamLog('joined playing session at step', roomTransport.step);
+          jamLog('joined playing session at step', roomTransport.step, '(awaiting beat-sync snap)');
         });
       } else {
         this._transportRemote = false;
@@ -369,11 +371,17 @@ class JamSync {
     if (!this.transport) return;
     const state = this.transport.getState();
     if (!state.isPlaying) return;
-    // Only nudge when playback modes match (same step array length).
-    // Different modes produce different step sequences — nudging across
-    // modes forces the leader's pattern onto the follower.
+
+    // First beat-sync after mid-jam join: snap to leader's step unconditionally
+    if (this._needsInitialSync) {
+      this._needsInitialSync = false;
+      this.transport.setPosition(msg.step);
+      jamLog('initial sync snap', { to: msg.step });
+      return;
+    }
+
+    // Only nudge when playback modes match (same step array length)
     if (msg.arrayLength !== state.stepArrayLength) return;
-    // Compare loop positions (not grid columns) for mode-independent sync
     const posDiff = Math.abs(msg.position - state.position);
     const wrapThreshold = (msg.arrayLength || 16) - 2;
     if (posDiff >= 2 && posDiff < wrapThreshold) {
@@ -421,7 +429,7 @@ class JamUI {
   updatePeerDisplay(selfColor, peers) {
     const dotsContainer = document.getElementById('jam-dots');
     if (dotsContainer) {
-      let dots = `<span class="jam-peer-dot jam-self-dot" style="--peer-color: ${selfColor};"></span>`;
+      let dots = `<span class="jam-peer-dot" style="--peer-color: ${selfColor};"></span>`;
       for (const [, peer] of peers) {
         dots += `<span class="jam-peer-dot" style="--peer-color: ${peer.color || '#777'};"></span>`;
       }
@@ -493,7 +501,7 @@ class JamUI {
           <div class="jam-connected">
             <span class="jam-code-display">${connection.roomCode}</span>
             <span class="jam-self" style="--peer-color: ${connection.color};">
-              <span class="jam-peer-dot jam-self-dot"></span>${connection.name} <span class="jam-you-tag">you</span>
+              <span class="jam-peer-dot jam-self-dot"></span>${connection.name}
             </span>
             <div id="jam-peers" class="jam-peers"></div>
             <button id="jam-copy-btn" class="jam-action-btn" title="Copy code">Copy</button>

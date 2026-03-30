@@ -1,12 +1,34 @@
 # ToneSeq
 
-Browser-based step sequencer and drum machine with live pattern switching and graph visualization.
+Browser-based step sequencer and drum machine with live pattern switching, graph visualization, and collaborative jam sessions.
 
 ## Quick Start
 
 **Play it now:** [toneseq.com](https://toneseq.com/)
 
-Or clone and open `index.html` directly — no build step, no server required.
+Or clone and open `index.html` directly — no build step, no server required. All sequencer, drum machine, and pattern features work offline.
+
+### Local development (with jam sessions)
+
+Jam sessions require an HTTP server (for CORS), a WebSocket server, and Redis:
+
+```bash
+# 1. Start Redis (needs JSON module — use Redis Stack or Redis 8.0+)
+brew services start redis          # macOS
+# or: docker run -p 6379:6379 redis/redis-stack-server:latest
+
+# 2. Start the WebSocket server
+cd server
+cp .env.example .env               # edit REDIS_URL if needed
+npm install
+npm start                          # ws://localhost:8080
+
+# 3. Serve the frontend (any static server works)
+cd ..
+python3 -m http.server 3000        # http://localhost:3000
+```
+
+Open `http://localhost:3000` in multiple tabs to test jam sessions.
 
 ## Features
 
@@ -36,6 +58,14 @@ Or clone and open `index.html` directly — no build step, no server required.
 - Loop-boundary queuing — pattern switches take effect at the next loop start
 - Graph thumbnails show pattern content at a glance
 
+**Jam Sessions**
+- Real-time collaborative sessions via WebSocket
+- Up to 4 tabs per room with automatic peer discovery
+- Transport sync (play/stop/BPM) across all participants
+- Same-browser tabs sync via BroadcastChannel for zero-latency coordination
+- Auto-reconnect with exponential backoff
+- Works without a server — solo mode is always available
+
 **Save & Share**
 - Full session state persists in the URL hash — bookmark or share a link to restore everything
 - Captures all patterns, control settings, waveforms, and playback modes
@@ -60,27 +90,19 @@ Or clone and open `index.html` directly — no build step, no server required.
 | Clear current tab | Click **Clr** |
 | Clear everything | Click **Clear All** in the controls panel |
 | Show/hide controls | Click **Controls** toggle in the header |
+| Start a jam session | Click **Jam** → **Start Session** |
+| Join a jam session | Click **Jam** → enter room code → **Join** |
+| Leave a jam session | Click **Jam** → **Leave** |
 
-## Jam Server (optional)
+## Jam Server
 
-The jam session feature requires a WebSocket server with Redis for state persistence.
+The WebSocket server requires Node.js 18+ and Redis with JSON module support. See [Local development](#local-development-with-jam-sessions) above for setup steps. Compatible Redis options:
 
-**Requirements:**
-- Node.js 18+
-- Redis with JSON module — any of:
-  - **Redis Stack** (local dev): `docker run -p 6379:6379 redis/redis-stack-server:latest` or `brew install redis-stack-server`
-  - **Redis 8.0+** (JSON bundled natively)
-  - **Redis Cloud** with JSON module enabled
+- **Redis Stack** (local dev): `brew install redis-stack-server` or Docker
+- **Redis 8.0+** (JSON bundled natively)
+- **Redis Cloud** with JSON module enabled
 
-**Setup:**
-```bash
-cd server
-cp .env.example .env    # edit REDIS_URL if needed
-npm install
-npm start               # starts WebSocket server on port 8080
-```
-
-The server validates RedisJSON availability on startup and exits with a clear error if it's missing. Solo mode (no server) works without any backend.
+The server validates RedisJSON availability on startup and exits with a clear error if it's missing. Solo mode works without any backend.
 
 ## Tech
 
