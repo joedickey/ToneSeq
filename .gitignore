@@ -7,6 +7,11 @@ server/AUDIO-SPIKE-RESULTS.md
 
 # Claude Code local artifacts
 .claude/settings.local.json
+.claude/plans/
 .agents/
 .claude/skills/
 skills-lock.json
+
+# Local dev artifacts
+QA-REPORT.md
+SUBMISSION.*
