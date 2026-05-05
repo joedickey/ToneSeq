@@ -91,6 +91,64 @@ class Room {
     }
   }
 
+  async updateTransportPlay(tabId, startPosition) {
+    const key = this._transportKey();
+    const position = startPosition ?? 0;
+    try {
+      const multi = this.redis.multi();
+      multi.json.set(key, '$.playing', true);
+      if (tabId) multi.json.set(key, '$.leaderTabId', tabId);
+      multi.json.set(key, '$.step', position);
+      multi.json.set(key, '$.position', position);
+      const results = await multi.exec();
+      if (results.some(result => result === null)) {
+        await this.setTransport({
+          playing: true,
+          bpm: 120,
+          step: position,
+          position,
+          leaderTabId: tabId || null
+        });
+      }
+    } catch {
+      await this.setTransport({
+        playing: true,
+        bpm: 120,
+        step: position,
+        position,
+        leaderTabId: tabId || null
+      });
+    }
+  }
+
+  async updateTransportStop() {
+    const key = this._transportKey();
+    try {
+      const multi = this.redis.multi();
+      multi.json.set(key, '$.playing', false);
+      multi.json.set(key, '$.leaderTabId', null);
+      const results = await multi.exec();
+      if (results.some(result => result === null)) {
+        await this.setTransport({ playing: false, bpm: 120, step: 0, position: 0, leaderTabId: null });
+      }
+    } catch {
+      await this.setTransport({ playing: false, bpm: 120, step: 0, position: 0, leaderTabId: null });
+    }
+  }
+
+  async updateTransportBeatSync({ step, position, arrayLength }) {
+    const key = this._transportKey();
+    try {
+      const multi = this.redis.multi();
+      multi.json.set(key, '$.step', step);
+      if (position != null) multi.json.set(key, '$.position', position);
+      if (arrayLength != null) multi.json.set(key, '$.arrayLength', arrayLength);
+      await multi.exec();
+    } catch {
+      // transport key doesn't exist yet — ignore
+    }
+  }
+
   // Partial updates for transport fields — no read-before-write needed
   async updateTransportField(path, value) {
     const key = this._transportKey();

@@ -1288,9 +1288,18 @@ function scheduleVisual(cb, time) {
   requestAnimationFrame(cb);
 }
 
+function normalizeSeqPosition(pos) {
+  const length = activeStepArray.length || STEPS;
+  const numeric = Number(pos);
+  if (!Number.isFinite(numeric)) return null;
+  return ((Math.floor(numeric) % length) + length) % length;
+}
+
 function setSeqPosition(pos) {
-  if (pos >= 0 && pos < activeStepArray.length) {
-    seqPosition = pos;
+  const normalized = normalizeSeqPosition(pos);
+  if (normalized !== null) {
+    seqPosition = normalized;
+    drumSeqPosition = normalized % STEPS;
     prevStep = -1;
   }
 }
@@ -1301,14 +1310,13 @@ async function play(fromStep) {
   Tone.Transport.bpm.value = Number(document.getElementById('bpm').value) || 120;
   // Restart metronome loop so beat 1 always lands on the first tick of playback
   if (metronomeEnabled) startMetronomeLoop();
-  if (fromStep != null && fromStep > 0 && fromStep < STEPS) {
+  const startPosition = normalizeSeqPosition(fromStep);
+  if (startPosition !== null && startPosition > 0) {
     // Join mid-sequence: align transport clock to the step position so audio
     // phase matches the leader (eliminates sub-step audible delay on join)
-    seqPosition = fromStep;
-    drumSeqPosition = fromStep;
-    prevStep = -1;
+    setSeqPosition(startPosition);
     const stepDuration = 60 / (Tone.Transport.bpm.value * 4);
-    Tone.Transport.start(undefined, fromStep * stepDuration);
+    Tone.Transport.start(undefined, startPosition * stepDuration);
   } else {
     Tone.Transport.start();
   }

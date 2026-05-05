@@ -142,6 +142,55 @@ describe('Room class', () => {
     expect(t.step).toBe(5);
   });
 
+  it('stores transport leader on play and preserves it across beat sync', async () => {
+    const room = new Room(redis, TEST_ROOM);
+    await room.updateTransportPlay('leader-1', 3);
+    await room.updateTransportBeatSync({ step: 6, position: 7, arrayLength: 16 });
+
+    const t = await room.getTransport();
+    expect(t.playing).toBe(true);
+    expect(t.leaderTabId).toBe('leader-1');
+    expect(t.step).toBe(6);
+    expect(t.position).toBe(7);
+  });
+
+  it('clears transport leader on stop', async () => {
+    const room = new Room(redis, TEST_ROOM);
+    await room.updateTransportPlay('leader-1', 3);
+    await room.updateTransportStop();
+
+    const t = await room.getTransport();
+    expect(t.playing).toBe(false);
+    expect(t.leaderTabId).toBeNull();
+    expect(t.step).toBe(3);
+  });
+
+  it('stores play starting position without beat sync metadata', async () => {
+    const room = new Room(redis, TEST_ROOM);
+    await room.updateTransportPlay('leader-1', 3);
+
+    const t = await room.getTransport();
+    expect(t.playing).toBe(true);
+    expect(t.leaderTabId).toBe('leader-1');
+    expect(t.step).toBe(3);
+    expect(t.position).toBe(3);
+    expect(t.arrayLength).toBeUndefined();
+  });
+
+  it('updateTransportBeatSync stores position metadata without overwriting other fields', async () => {
+    const room = new Room(redis, TEST_ROOM);
+    await room.setTransport({ playing: true, bpm: 132, step: 0, leaderTabId: 'leader-2' });
+    await room.updateTransportBeatSync({ step: 6, position: 7, arrayLength: 16 });
+
+    const t = await room.getTransport();
+    expect(t.playing).toBe(true);
+    expect(t.bpm).toBe(132);
+    expect(t.leaderTabId).toBe('leader-2');
+    expect(t.step).toBe(6);
+    expect(t.position).toBe(7);
+    expect(t.arrayLength).toBe(16);
+  });
+
   it('updateTransportStep is a no-op if transport key does not exist', async () => {
     const room = new Room(redis, TEST_ROOM);
     // Should not throw
