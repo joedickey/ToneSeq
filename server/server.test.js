@@ -378,7 +378,9 @@ describe('WebSocket Relay Server', () => {
       action: 'beat-sync',
       step: 7,
       position: 8,
-      arrayLength: 16
+      arrayLength: 16,
+      transportSeconds: 4.25,
+      sentAtMs: 123456
     }));
     await new Promise(r => setTimeout(r, 300));
 
@@ -387,6 +389,8 @@ describe('WebSocket Relay Server', () => {
     expect(t.step).toBe(7);
     expect(t.position).toBe(8);
     expect(t.arrayLength).toBe(16);
+    expect(t.transportSeconds).toBe(4.25);
+    expect(t.sentAtMs).toBe(123456);
     ws.close();
     await cleanRoom(room);
   });
@@ -404,13 +408,19 @@ describe('WebSocket Relay Server', () => {
       action: 'beat-sync',
       step: 7,
       position: 8,
-      arrayLength: 16
+      arrayLength: 16,
+      transportSeconds: 4.25,
+      bpm: 140,
+      sentAtMs: 123456
     }));
 
     const msg = await promise;
     expect(msg.step).toBe(7);
     expect(msg.position).toBe(8);
     expect(msg.arrayLength).toBe(16);
+    expect(msg.transportSeconds).toBe(4.25);
+    expect(msg.bpm).toBe(140);
+    expect(msg.sentAtMs).toBe(123456);
     ws1.close(); ws2.close();
     await cleanRoom(room);
   });

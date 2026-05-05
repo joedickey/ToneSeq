@@ -180,7 +180,14 @@ describe('Room class', () => {
   it('updateTransportBeatSync stores position metadata without overwriting other fields', async () => {
     const room = new Room(redis, TEST_ROOM);
     await room.setTransport({ playing: true, bpm: 132, step: 0, leaderTabId: 'leader-2' });
-    await room.updateTransportBeatSync({ step: 6, position: 7, arrayLength: 16 });
+    await room.updateTransportBeatSync({
+      step: 6,
+      position: 7,
+      arrayLength: 16,
+      transportSeconds: 3.5,
+      bpm: 132,
+      sentAtMs: 123456
+    });
 
     const t = await room.getTransport();
     expect(t.playing).toBe(true);
@@ -189,6 +196,8 @@ describe('Room class', () => {
     expect(t.step).toBe(6);
     expect(t.position).toBe(7);
     expect(t.arrayLength).toBe(16);
+    expect(t.transportSeconds).toBe(3.5);
+    expect(t.sentAtMs).toBe(123456);
   });
 
   it('updateTransportStep is a no-op if transport key does not exist', async () => {

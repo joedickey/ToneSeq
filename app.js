@@ -1304,6 +1304,84 @@ function setSeqPosition(pos) {
   }
 }
 
+function getJamClockTarget(payload, force = false) {
+  const length = payload.arrayLength || activeStepArray.length || STEPS;
+  const rawPosition = payload.position != null ? payload.position : payload.step;
+  const numeric = Number(rawPosition);
+  if (!Number.isFinite(numeric) || length <= 0) return null;
+
+  const bpm = Number(payload.bpm) || Tone.Transport.bpm.value || 120;
+  const stepDuration = 60 / (bpm * 4);
+  const loopDuration = length * stepDuration;
+  const elapsedSeconds = payload.sentAtMs
+    ? Math.max(0, (Date.now() - payload.sentAtMs) / 1000)
+    : 0;
+  const leaderSeconds = Number(payload.transportSeconds);
+  const hasLeaderSeconds = Number.isFinite(leaderSeconds);
+  const targetClockSeconds = hasLeaderSeconds
+    ? leaderSeconds + elapsedSeconds
+    : (numeric * stepDuration) + Math.min(elapsedSeconds, loopDuration);
+  const phaseSeconds = ((targetClockSeconds % loopDuration) + loopDuration) % loopDuration;
+  const targetPosition = hasLeaderSeconds
+    ? ((Math.floor((targetClockSeconds / stepDuration) + 1) % length) + length) % length
+    : ((Math.floor(phaseSeconds / stepDuration) % length) + length) % length;
+
+  let targetSeconds = hasLeaderSeconds ? targetClockSeconds : phaseSeconds;
+  const currentSeconds = Tone.Transport.seconds || 0;
+  if (!hasLeaderSeconds && loopDuration > 0) {
+    const cycleBase = Math.floor(currentSeconds / loopDuration) * loopDuration;
+    const candidates = [
+      cycleBase + phaseSeconds,
+      cycleBase + phaseSeconds - loopDuration,
+      cycleBase + phaseSeconds + loopDuration,
+    ].filter(v => v >= 0);
+    targetSeconds = candidates.reduce((best, candidate) =>
+      Math.abs(candidate - currentSeconds) < Math.abs(best - currentSeconds) ? candidate : best,
+      candidates[0] || phaseSeconds);
+  }
+
+  return {
+    force,
+    length,
+    targetPosition,
+    targetSeconds,
+    driftSeconds: Math.abs(targetSeconds - currentSeconds),
+  };
+}
+
+function getJamClockPayload(payload) {
+  if (!payload) return null;
+  return {
+    step: payload.step,
+    position: payload.position != null ? payload.position : payload.step,
+    arrayLength: payload.arrayLength || activeStepArray.length || STEPS,
+    transportSeconds: payload.transportSeconds,
+    bpm: payload.bpm || Tone.Transport.bpm.value || 120,
+    sentAtMs: payload.sentAtMs || Date.now(),
+  };
+}
+
+function syncTransportToJam(payload, options = {}) {
+  if (!payload || typeof Tone === 'undefined' || !Tone.Transport) return;
+  if (payload.bpm) setBPM(payload.bpm);
+
+  const target = getJamClockTarget(payload, !!options.force);
+  if (!target) return;
+
+  const positionDrift = target.targetPosition !== seqPosition;
+  const needsClockNudge = target.force || positionDrift || target.driftSeconds >= 0.02;
+  if (!needsClockNudge) return;
+
+  setSeqPosition(target.targetPosition);
+  Tone.Transport.seconds = target.targetSeconds;
+}
+
+async function playSyncedToJam(payload) {
+  const startPosition = payload && (payload.position != null ? payload.position : payload.step);
+  await play(startPosition);
+  syncTransportToJam(payload, { force: true });
+}
+
 async function play(fromStep) {
   if (isPlaying) return;
   await Tone.start();

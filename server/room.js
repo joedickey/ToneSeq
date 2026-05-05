@@ -136,13 +136,16 @@ class Room {
     }
   }
 
-  async updateTransportBeatSync({ step, position, arrayLength }) {
+  async updateTransportBeatSync({ step, position, arrayLength, transportSeconds, bpm, sentAtMs }) {
     const key = this._transportKey();
     try {
       const multi = this.redis.multi();
       multi.json.set(key, '$.step', step);
       if (position != null) multi.json.set(key, '$.position', position);
       if (arrayLength != null) multi.json.set(key, '$.arrayLength', arrayLength);
+      if (transportSeconds != null) multi.json.set(key, '$.transportSeconds', transportSeconds);
+      if (bpm != null) multi.json.set(key, '$.bpm', bpm);
+      if (sentAtMs != null) multi.json.set(key, '$.sentAtMs', sentAtMs);
       await multi.exec();
     } catch {
       // transport key doesn't exist yet — ignore
