@@ -312,6 +312,9 @@ describe('WebSocket Relay Server', () => {
     const t = await redisClient.json.get(`{room:${room}}:transport`);
     expect(t).not.toBeNull();
     expect(t.playing).toBe(true);
+    expect(t.leaderTabId).toBe('tp');
+    expect(t.step).toBe(0);
+    expect(t.position).toBe(0);
     ws.close();
     await cleanRoom(room);
   });
@@ -327,6 +330,7 @@ describe('WebSocket Relay Server', () => {
 
     const t = await redisClient.json.get(`{room:${room}}:transport`);
     expect(t.playing).toBe(false);
+    expect(t.leaderTabId).toBeNull();
     ws.close();
     await cleanRoom(room);
   });
@@ -356,7 +360,68 @@ describe('WebSocket Relay Server', () => {
     const t = await redisClient.json.get(`{room:${room}}:transport`);
     expect(t.playing).toBe(true);
     expect(t.step).toBe(7);
+    expect(t.position).toBe(0);
+    expect(t.arrayLength).toBeUndefined();
     ws.close();
+    await cleanRoom(room);
+  });
+
+  it('persists beat-sync position metadata for late joiners', async () => {
+    const room = 'TBEATPOS' + Date.now();
+    const ws = await connect(room);
+
+    ws.send(JSON.stringify({ type: 'transport', tabId: 'tp', action: 'play' }));
+    await new Promise(r => setTimeout(r, 300));
+    ws.send(JSON.stringify({
+      type: 'transport',
+      tabId: 'tp',
+      action: 'beat-sync',
+      step: 7,
+      position: 8,
+      arrayLength: 16,
+      transportSeconds: 4.25,
+      sentAtMs: 123456
+    }));
+    await new Promise(r => setTimeout(r, 300));
+
+    const t = await redisClient.json.get(`{room:${room}}:transport`);
+    expect(t.playing).toBe(true);
+    expect(t.step).toBe(7);
+    expect(t.position).toBe(8);
+    expect(t.arrayLength).toBe(16);
+    expect(t.transportSeconds).toBe(4.25);
+    expect(t.sentAtMs).toBe(123456);
+    ws.close();
+    await cleanRoom(room);
+  });
+
+  it('forwards beat-sync position metadata for cross-device playback correction', async () => {
+    const room = 'TBEATMETA' + Date.now();
+    const ws1 = await connect(room);
+    const ws2 = await connect(room);
+
+    const promise = listen(ws2, m => m.type === 'transport' && m.action === 'beat-sync');
+    await new Promise(r => setTimeout(r, 50));
+    ws1.send(JSON.stringify({
+      type: 'transport',
+      tabId: 'leader',
+      action: 'beat-sync',
+      step: 7,
+      position: 8,
+      arrayLength: 16,
+      transportSeconds: 4.25,
+      bpm: 140,
+      sentAtMs: 123456
+    }));
+
+    const msg = await promise;
+    expect(msg.step).toBe(7);
+    expect(msg.position).toBe(8);
+    expect(msg.arrayLength).toBe(16);
+    expect(msg.transportSeconds).toBe(4.25);
+    expect(msg.bpm).toBe(140);
+    expect(msg.sentAtMs).toBe(123456);
+    ws1.close(); ws2.close();
     await cleanRoom(room);
   });
 
@@ -376,6 +441,8 @@ describe('WebSocket Relay Server', () => {
     expect(msg.transport).not.toBeNull();
     expect(msg.transport.playing).toBe(true);
     expect(msg.transport.bpm).toBe(140);
+    expect(msg.transport.position).toBe(0);
+    expect(msg.transport.arrayLength).toBeUndefined();
     ws1.close(); ws2.close();
     await cleanRoom(room);
   });

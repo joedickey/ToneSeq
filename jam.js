@@ -192,6 +192,7 @@ class JamSync {
     this._isLeader = false;
     this._leaderTabId = null;
     this._leaderElectionTimer = null;
+    this._transportLeaderTabId = null;
     this._transportRemote = false;
     this._needsInitialSync = false;
   }
@@ -247,26 +248,60 @@ class JamSync {
   }
 
   broadcastBeatSync(step, position, arrayLength) {
-    if (!this._isLeader || !this._clockChannel) return;
-    this._clockChannel.postMessage({
+    const state = this.transport.getState();
+    const syncPayload = {
       type: 'beat-sync',
       tabId: this.conn.tabId,
       step,
       position,
-      arrayLength
-    });
+      arrayLength,
+      transportSeconds: state.transportSeconds,
+      bpm: state.bpm,
+      sentAtMs: Date.now()
+    };
 
-    // Also send over WebSocket for remote tabs (every step)
+    if (this._isLeader && this._clockChannel) {
+      this._clockChannel.postMessage(syncPayload);
+    }
+
+    // Also send over WebSocket for remote devices, but only from the room's
+    // transport leader. This avoids competing beat clocks from each device.
+    if (this._transportLeaderTabId !== this.conn.tabId) return;
     this.conn.send({
       type: 'transport',
       tabId: this.conn.tabId,
       action: 'beat-sync',
-      step
+      step,
+      position,
+      arrayLength,
+      transportSeconds: syncPayload.transportSeconds,
+      bpm: syncPayload.bpm,
+      sentAtMs: syncPayload.sentAtMs
     });
+  }
+
+  _finishRemoteAfter(result) {
+    Promise.resolve(result)
+      .catch(err => jamLog('remote transport failed', err))
+      .finally(() => { this._transportRemote = false; });
+  }
+
+  _withRemoteTransport(fn) {
+    this._transportRemote = true;
+    try {
+      const result = fn();
+      this._finishRemoteAfter(result);
+      return result;
+    } catch (err) {
+      this._transportRemote = false;
+      throw err;
+    }
   }
 
   sendTransport(action, value) {
     if (this._transportRemote) return;
+    if (action === 'play') this._transportLeaderTabId = this.conn.tabId;
+    if (action === 'stop') this._transportLeaderTabId = null;
     this.conn.send({
       type: 'transport',
       tabId: this.conn.tabId,
@@ -278,10 +313,12 @@ class JamSync {
   handleTransportMessage(msg) {
     if (msg.tabId === this.conn.tabId) return;
     this._transportRemote = true;
+    let pendingRemote = null;
     try {
       switch (msg.action) {
         case 'play':
-          this.transport.play();
+          this._transportLeaderTabId = msg.tabId;
+          pendingRemote = this.transport.play(msg.value);
           break;
         case 'request-sync': {
           const state = this.transport.getState();
@@ -295,7 +332,8 @@ class JamSync {
                 playing: true,
                 step: state.position,
                 transportPos: state.transportSeconds,
-                bpm: state.bpm
+                bpm: state.bpm,
+                leaderTabId: this._transportLeaderTabId
               }
             }));
           }
@@ -304,10 +342,11 @@ class JamSync {
         case 'sync-state':
           jamLog('sync-state received', msg.value);
           if (msg.value && msg.value.playing) {
-            this._applyTransportSync(msg.value);
+            pendingRemote = this._applyTransportSync(msg.value);
           }
           break;
         case 'stop':
+          this._transportLeaderTabId = null;
           this.transport.stop();
           break;
         case 'bpm':
@@ -319,12 +358,18 @@ class JamSync {
           }
           break;
         case 'beat-sync':
-          // Remote beat-sync from WS (cross-device): no continuous nudging.
-          // Same BPM keeps tabs approximately in sync after initial join snap.
+          // Remote beat-sync from WS (cross-device): apply the same step
+          // correction used for same-device tabs so late joiners and drifted
+          // clients snap back to the leader.
+          this._nudgeTransport(msg);
           break;
       }
     } finally {
-      this._transportRemote = false;
+      if (pendingRemote) {
+        this._finishRemoteAfter(pendingRemote);
+      } else {
+        this._transportRemote = false;
+      }
     }
   }
 
@@ -333,27 +378,32 @@ class JamSync {
     if (!roomTransport || !this.transport) return;
     jamLog('room-state transport', roomTransport);
     if (roomTransport.playing) {
+      this._transportLeaderTabId = roomTransport.leaderTabId || null;
       if (roomTransport.bpm) {
         this.transport.setBPM(roomTransport.bpm);
         const bpmEl = document.getElementById('bpm');
         if (bpmEl) bpmEl.value = Math.round(roomTransport.bpm);
       }
       const state = this.transport.getState();
-      this._transportRemote = true;
       if (!state.isPlaying) {
         this._needsInitialSync = true;
-        this.transport.play(roomTransport.step).then(() => {
-          this._transportRemote = false;
-          jamLog('joined playing session at step', roomTransport.step, '(awaiting beat-sync snap)');
-        });
+        const startPayload = {
+          ...roomTransport,
+          arrayLength: roomTransport.arrayLength || state.stepArrayLength
+        };
+        this._withRemoteTransport(() => this.transport.playSynced(startPayload));
+        jamLog('joined playing session at position', startPayload.position ?? startPayload.step, '(awaiting beat-sync snap)');
       } else {
         this._transportRemote = false;
       }
+    } else {
+      this._transportLeaderTabId = null;
     }
   }
 
   _applyTransportSync(value) {
     if (!this.transport) return;
+    if (value.leaderTabId) this._transportLeaderTabId = value.leaderTabId;
     if (value.bpm) {
       this.transport.setBPM(value.bpm);
       const bpmEl = document.getElementById('bpm');
@@ -361,10 +411,18 @@ class JamSync {
     }
     const state = this.transport.getState();
     if (!state.isPlaying) {
-      this.transport.play(value.step);
-    } else if (value.step != null) {
-      this.transport.setPosition(value.step);
+      const payload = {
+        step: value.step,
+        position: value.position != null ? value.position : value.step,
+        arrayLength: value.arrayLength || state.stepArrayLength,
+        bpm: value.bpm,
+        sentAtMs: value.sentAtMs
+      };
+      return this.transport.playSynced(payload);
+    } else {
+      this.transport.syncClock(value, { force: true });
     }
+    return null;
   }
 
   _nudgeTransport(msg) {
@@ -372,22 +430,16 @@ class JamSync {
     const state = this.transport.getState();
     if (!state.isPlaying) return;
 
-    // First beat-sync after mid-jam join: snap to leader's step unconditionally
-    if (this._needsInitialSync) {
-      this._needsInitialSync = false;
-      this.transport.setPosition(msg.step);
-      jamLog('initial sync snap', { to: msg.step });
-      return;
-    }
+    // First beat-sync after mid-jam join: snap to leader phase unconditionally.
+    const force = this._needsInitialSync;
+    this._needsInitialSync = false;
 
-    // Only nudge when playback modes match (same step array length)
+    // Only nudge when playback modes match (same step array length).
+    // Older beat-sync messages did not include position metadata, so they can
+    // only persist the current step for late joiners.
+    if (msg.arrayLength == null || msg.position == null) return;
     if (msg.arrayLength !== state.stepArrayLength) return;
-    const posDiff = Math.abs(msg.position - state.position);
-    const wrapThreshold = (msg.arrayLength || 16) - 2;
-    if (posDiff >= 2 && posDiff < wrapThreshold) {
-      this.transport.setPosition(msg.position);
-      jamLog('nudge correction', { from: state.position, to: msg.position, drift: posDiff });
-    }
+    this.transport.syncClock(msg, { force });
   }
 
   teardown() {
@@ -400,6 +452,7 @@ class JamSync {
     }
     this._isLeader = false;
     this._leaderTabId = null;
+    this._transportLeaderTabId = null;
   }
 }
 
@@ -630,9 +683,11 @@ class JamSession {
     // Transport interface decouples JamSync from app.js globals
     const transport = {
       play:        (step) => typeof play === 'function' ? play(step) : Promise.resolve(),
+      playSynced:  (payload) => typeof playSyncedToJam === 'function' ? playSyncedToJam(payload) : Promise.resolve(),
       stop:        () => { if (typeof stop === 'function') stop(); },
       setBPM:      (bpm) => { if (typeof setBPM === 'function') setBPM(bpm); },
       setPosition: (pos) => { if (typeof setSeqPosition === 'function') setSeqPosition(pos); },
+      syncClock:   (payload, options) => { if (typeof syncTransportToJam === 'function') syncTransportToJam(payload, options); },
       syncHash:    () => { if (typeof scheduleHashSync === 'function') scheduleHashSync(); },
       getState:    () => ({
         isPlaying:      typeof isPlaying !== 'undefined' ? isPlaying : false,

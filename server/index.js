@@ -59,10 +59,10 @@ const messageHandlers = {
 
   transport: async (msg, { room }) => {
     const transportActions = {
-      play:        () => room.updateTransportField('$.playing', true),
-      stop:        () => room.updateTransportField('$.playing', false),
+      play:        () => room.updateTransportPlay(msg.tabId, msg.value),
+      stop:        () => room.updateTransportStop(),
       bpm:         () => room.updateTransportField('$.bpm', msg.value),
-      'beat-sync': () => room.updateTransportStep(msg.step),
+      'beat-sync': () => room.updateTransportBeatSync(msg),
     };
     const action = transportActions[msg.action];
     if (action) await action();
